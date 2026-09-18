@@ -256,7 +256,7 @@ def run_scan(
 
 
 # ---------------------------------------------------------------------------
-# Workflow 1b - the 20-minute news pulse
+# Workflow 1b - the hourly news pulse
 # ---------------------------------------------------------------------------
 
 def run_pulse(
@@ -273,7 +273,7 @@ def run_pulse(
     which is the normal outcome during quiet hours and is not an error.
 
     The seen-store, not the time window, decides what counts as new: feeds lag
-    behind publication, so the scan looks back further than 20 minutes and
+    behind publication, so the scan looks back further than the 1-hour interval and
     lets the ledger filter out anything already sent.
     """
     end = virality_engine.now_utc()
@@ -303,7 +303,7 @@ def run_pulse(
             len(scored), threshold,
         )
         # Still mark them seen: they were judged and rejected, and re-judging
-        # the same weak stories every 20 minutes wastes the whole cycle.
+        # the same weak stories every hour wastes the whole cycle.
         if not dry_run:
             seen_store.save(seen_store.mark(fresh, store))
         return 0
@@ -331,7 +331,7 @@ def run_pulse(
     #
     # What gets marked matters. Posted stories obviously do, and so do the
     # ones that scored below the threshold - re-judging the same weak stories
-    # every 20 minutes would burn the whole cycle. Strong stories that merely
+    # every hour would burn the whole cycle. Strong stories that merely
     # overflowed the per-post cap are deliberately left UNMARKED, so they roll
     # into the next pulse and compete again rather than being suppressed
     # forever. Recency decay lowers their score each cycle, so they either get
@@ -398,7 +398,7 @@ def run_audit(
 HELP_TEXT = (
     "<b>Aravind News 24 — command reference</b>\n\n"
     "<b>/pulse</b> — post whatever is new since the last check\n"
-    "   (this runs automatically every 20 minutes)\n\n"
+    "   (this runs automatically every hour)\n\n"
     "<b>/scan</b> — virality briefing for the last 24 hours\n"
     "<b>/scan 25m</b> — the rolling 25-minute scan\n"
     "<b>/scan last 6 hours</b>\n"

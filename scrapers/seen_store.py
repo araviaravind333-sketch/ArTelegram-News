@@ -1,6 +1,6 @@
 """Cross-run memory of stories already posted to Telegram.
 
-Each scan run is a fresh process, so without a persisted store the 20-minute
+Each scan run is a fresh process, so without a persisted store the hourly
 pulse would re-post the same stories every time. This module keeps a small
 JSON ledger of what has already gone out, keyed two ways per story:
 

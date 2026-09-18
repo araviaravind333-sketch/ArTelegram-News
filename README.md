@@ -9,7 +9,7 @@ paid news API is used anywhere.
 
 ## What it does
 
-**Workflow 1 — News pulse (every 20 minutes)** — the main feed
+**Workflow 1 — News pulse (every hour)** — the main feed
 Aggregates 34 free RSS feeds, deduplicates across sources, scores each story
 1-100 for virality, and posts **only what is new since the last run** as a
 compact Telegram message: hook, core facts, score, drivers, CTA and a tappable
@@ -104,7 +104,7 @@ python main.py check                            # validate configuration
 
 | Command | Effect |
 |---|---|
-| `/pulse` | post whatever is new since the last check (runs automatically every 20 min) |
+| `/pulse` | post whatever is new since the last check (runs automatically every hour) |
 | `/scan` | full `.docx` briefing for the last 24 hours |
 | `/scan 25m` | `.docx` for a short custom window |
 | `/scan last 6 hours` | relative window |
@@ -122,7 +122,7 @@ IST. `DD/MM/YY`, `YYYY-MM-DD`, `HH:MM` and `6:00 AM` are also accepted.
 
 | File | Schedule (UTC cron) | Purpose |
 |---|---|---|
-| `.github/workflows/news_pulse.yml` | `0,20,40 * * * *` | **the 20-minute news feed** |
+| `.github/workflows/news_pulse.yml` | `5 * * * *` | **the hourly news feed** |
 | `.github/workflows/daily_audit.yml` | `30 4 * * *` → 10:00 AM IST | reels audit, delivered well before 10:30 |
 | `.github/workflows/news_scan.yml` | `30 1 * * *` → 07:00 AM IST | full `.docx` briefing |
 | `.github/workflows/telegram_listener.yml` | `*/5 * * * *` | on-demand `/pulse`, `/scan`, `/audit` |
@@ -136,9 +136,12 @@ late, or is skipped entirely, the next one still catches everything: the
 seen-store decides what is new, and the 90-minute lookback covers the gap.
 
 **Free-tier note:** Actions minutes are unlimited on public repositories. On a
-private repo the free allowance is 2,000 minutes/month, and the pulse alone
-(72 runs a day, ~1 minute each) would exceed it. **Make the repo public**, or
-widen the pulse cron and drop the listener.
+private repo the free allowance is 2,000 minutes/month; at an hourly cadence
+(24 runs a day, ~1 minute each, ~720 minutes/month) the pulse comfortably fits
+alongside the daily audit and briefing, but the 5-minute listener on top of it
+would still exceed the allowance. **Make the repo public**, or widen the
+listener cron / drop it and drive `/scan` and `/audit` manually via
+`workflow_dispatch`.
 
 ---
 
@@ -151,11 +154,11 @@ an updated permalink or a Google News redirect is still recognised.
 
 The flow each run:
 
-1. Scan the last 90 minutes (longer than the 20-minute interval, to absorb
+1. Scan the last 90 minutes (longer than the 1-hour interval, to absorb
    both RSS publication lag and scheduler lag).
 2. Drop anything already in the ledger.
 3. Score what remains; hold back anything under `PULSE_MIN_SCORE`.
-4. Post the top `PULSE_MAX_ITEMS` (default 6).
+4. Post the top `PULSE_MAX_ITEMS` (default 10).
 5. **Write the ledger only after Telegram confirms delivery**, so a Telegram
    outage retries those stories next run instead of losing them.
 
@@ -181,7 +184,7 @@ scrapers/rss_collector.py      34 feeds -> fetch -> dedupe -> time-window filter
 scrapers/seen_store.py         cross-run memory so the pulse never repeats a story
 analyzer/virality_engine.py    classification, 1-100 scoring, hooks, CTAs, Instagram-fit
 generators/doc_generator.py    styled landscape .docx with per-category tables
-generators/pulse_formatter.py  compact Telegram digest for the 20-minute pulse
+generators/pulse_formatter.py  compact Telegram digest for the hourly pulse
 services/instagram_auditor.py  Graph API insights, benchmarks, 1M-view roadmap
 services/telegram_notifier.py  sendMessage / sendDocument / getUpdates
 main.py                        window parsing, command dispatch, CLI
@@ -221,7 +224,7 @@ category today?*
 - **Hooks reframe, they never invent.** Core facts are derived only from the
   headline and the publisher's own summary text. (The 4-column table shows
   the plain original headline, not the reel hook — the hook, CTA and driver
-  tags are still computed internally and used by the 20-minute Telegram
+  tags are still computed internally and used by the hourly Telegram
   pulse.)
 - **CTAs must be payable.** A "save before the deadline" CTA is only used when
   the story actually contains deadline language; the guard list is deliberately

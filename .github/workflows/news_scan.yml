@@ -1,6 +1,6 @@
 name: Full Briefing (.docx)
 
-# The rolling news feed is handled by news_pulse.yml every 20 minutes. This
+# The rolling news feed is handled by news_pulse.yml every hour. This
 # workflow is the long-form counterpart: one styled Word document covering all
 # 8 categories, delivered once each morning at 07:00 IST (01:30 UTC), plus
 # on demand for any custom window.

@@ -1,4 +1,4 @@
-"""Compact Telegram digest for the 20-minute news pulse.
+"""Compact Telegram digest for the hourly news pulse.
 
 Written for a phone screen: every story fits in a few lines, the hook leads,
 and the source is a tappable link rather than a raw URL. Telegram HTML parse

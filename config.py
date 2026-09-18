@@ -190,17 +190,20 @@ FEED_MAX_WORKERS = get_int("FEED_MAX_WORKERS", 12)
 FEED_ENTRIES_PER_SOURCE = get_int("FEED_ENTRIES_PER_SOURCE", 60)
 
 DEFAULT_SCAN_HOURS = get_int("DEFAULT_SCAN_HOURS", 24)
-FAST_SCAN_MINUTES = get_int("FAST_SCAN_MINUTES", 20)
+FAST_SCAN_MINUTES = get_int("FAST_SCAN_MINUTES", 60)
 
-# --- 20-minute news pulse --------------------------------------------------
+# --- Hourly news pulse ------------------------------------------------------
 #: How often the pulse workflow runs. Must divide 60 evenly for a stable cron.
-PULSE_MINUTES = get_int("PULSE_MINUTES", 20)
-#: Feeds lag: a story published at 12:19 may not appear in the RSS until
-#: 12:35. The pulse therefore looks back further than its own interval and
+PULSE_MINUTES = get_int("PULSE_MINUTES", 60)
+#: Feeds lag: a story published at 12:50 may not appear in the RSS until
+#: 13:05. The pulse therefore looks back further than its own interval and
 #: relies on the seen-store, not the window, to decide what is genuinely new.
 PULSE_LOOKBACK_MINUTES = get_int("PULSE_LOOKBACK_MINUTES", 90)
-#: Most stories to put in a single pulse message, highest score first.
-PULSE_MAX_ITEMS = get_int("PULSE_MAX_ITEMS", 6)
+#: Most stories to put in a single pulse message, highest score first. Raised
+#: from the 20-minute cadence's default of 6, since an hour accumulates more
+#: genuinely new stories; anything scoring high enough but still over this
+#: cap rolls into the next hour's pulse rather than being dropped.
+PULSE_MAX_ITEMS = get_int("PULSE_MAX_ITEMS", 10)
 #: Stories scoring below this are held back rather than posted as filler.
 PULSE_MIN_SCORE = get_int("PULSE_MIN_SCORE", 45)
 #: How long a story stays in the seen-store before it may resurface.
@@ -209,7 +212,7 @@ SEEN_TTL_HOURS = get_int("SEEN_TTL_HOURS", 48)
 OUTPUT_DIR = BASE_DIR / (get("OUTPUT_DIR", "output") or "output")
 DATA_DIR = BASE_DIR / "data"
 BENCHMARK_FILE = DATA_DIR / "benchmarks.json"
-#: Ledger of stories already posted, so the 20-minute pulse never repeats one.
+#: Ledger of stories already posted, so the hourly pulse never repeats one.
 SEEN_FILE = DATA_DIR / "seen.json"
 
 #: A browser User-Agent is required, not cosmetic: several publishers (PIB

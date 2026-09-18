@@ -1,8 +1,9 @@
-name: News Pulse (every 20 minutes)
+name: News Pulse (every hour)
 
 # Posts only what is new since the previous run, straight into the Telegram
-# chat. '0,20,40 * * * *' is an exact 20-minute cadence; a bare '*/20' would
-# also work, but the explicit minutes make the schedule obvious in the log.
+# chat. '5 * * * *' fires 5 minutes past every hour - offset from the exact
+# hour mark because that's when GitHub's scheduler is most congested and
+# runs are more likely to lag.
 #
 # GitHub's scheduler is best-effort and can lag by several minutes under load.
 # That does not cause gaps or repeats here: the seen-store, not the clock,
@@ -10,7 +11,7 @@ name: News Pulse (every 20 minutes)
 # absorb both scheduler lag and RSS publication lag.
 on:
   schedule:
-    - cron: '0,20,40 * * * *'
+    - cron: '5 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
