@@ -6,25 +6,27 @@
       "posted_at": "2026-09-17T09:43:07+00:00",
       "hook_type": "Stat/number hook",
       "topic": "India News",
-      "views": 0.0,
-      "reach": 0.0,
+      "views": 103.0,
+      "reach": 55.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 0.0,
-      "avg_watch_seconds": 0.0
+      "view_through": 1.87,
+      "avg_watch_seconds": 5.12
     }
   },
   "benchmarks": {
-    "views": 0.0,
+    "views": 103.0,
     "share_rate": 0.0,
     "save_rate": 0.0,
     "comment_rate": 0.0,
     "engagement_rate": 0.0,
-    "view_through": 0.0,
+    "view_through": 1.87,
     "sample_size": 1
   },
-  "category_performance": {},
-  "updated_at": "2026-09-18T17:10:15.613311+00:00"
+  "category_performance": {
+    "India News": 103.0
+  },
+  "updated_at": "2026-09-18T17:14:24.397164+00:00"
 }
