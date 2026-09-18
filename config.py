@@ -32,11 +32,12 @@ CATEGORIES: tuple[str, ...] = (
     "High-Virality Instagram Picks",
     "India News",
     "World News",
-    "Uncovered & Shocking News",
-    "Health & Wellness News",
-    "Current Affairs & Policy",
-    "Business & Finance News",
+    "Business News",
     "Sports News",
+    "Technology News",
+    "Health News",
+    "Unreported News",
+    "Current Affairs",
 )
 
 #: Categories the classifier may assign to a raw article (i.e. every category

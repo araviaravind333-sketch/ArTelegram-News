@@ -75,25 +75,25 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "Google News - Business",
         f"{GOOGLE_NEWS}/headlines/section/topic/BUSINESS?{IN_LOCALE}",
-        "Business & Finance News",
+        "Business News",
         0.80,
     ),
     FeedSource(
         "Google News - Technology",
         f"{GOOGLE_NEWS}/headlines/section/topic/TECHNOLOGY?{IN_LOCALE}",
-        "Business & Finance News",
+        "Technology News",
         0.78,
     ),
     FeedSource(
         "Google News - Health",
         f"{GOOGLE_NEWS}/headlines/section/topic/HEALTH?{IN_LOCALE}",
-        "Health & Wellness News",
+        "Health News",
         0.80,
     ),
     FeedSource(
         "Google News - Science",
         f"{GOOGLE_NEWS}/headlines/section/topic/SCIENCE?{IN_LOCALE}",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.78,
     ),
     FeedSource(
@@ -113,25 +113,34 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "Google News - Indian Policy & Parliament",
         f"{GOOGLE_NEWS}/search?q=India+policy+OR+parliament+OR+cabinet+when:2d&{IN_LOCALE}",
-        "Current Affairs & Policy",
+        "Current Affairs",
         0.78,
     ),
     FeedSource(
         "Google News - Supreme Court & Law",
         f"{GOOGLE_NEWS}/search?q=Supreme+Court+India+OR+High+Court+verdict+when:2d&{IN_LOCALE}",
-        "Current Affairs & Policy",
+        "Current Affairs",
         0.78,
     ),
     FeedSource(
         "Google News - Markets & Rupee",
         f"{GOOGLE_NEWS}/search?q=Sensex+OR+Nifty+OR+rupee+OR+RBI+when:2d&{IN_LOCALE}",
-        "Business & Finance News",
+        "Business News",
         0.78,
     ),
     FeedSource(
         "Google News - Startups & Funding",
         f"{GOOGLE_NEWS}/search?q=India+startup+funding+OR+IPO+OR+acquisition+when:2d&{IN_LOCALE}",
-        "Business & Finance News",
+        "Business News",
+        0.75,
+    ),
+    FeedSource(
+        # Technology News is a standalone category with only one dedicated
+        # topic feed above; this query feed gives it a second, deeper source
+        # so it can reliably clear MIN_ITEMS_PER_CATEGORY on its own.
+        "Google News - AI & Big Tech",
+        f"{GOOGLE_NEWS}/search?q=artificial+intelligence+OR+smartphone+OR+chip+OR+cybersecurity+when:2d&{IN_LOCALE}",
+        "Technology News",
         0.75,
     ),
     FeedSource(
@@ -149,19 +158,19 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "Google News - Wellness & Nutrition",
         f"{GOOGLE_NEWS}/search?q=nutrition+OR+mental+health+OR+fitness+study+when:2d&{IN_LOCALE}",
-        "Health & Wellness News",
+        "Health News",
         0.75,
     ),
     FeedSource(
         "Google News - Rare & Unusual",
         f"{GOOGLE_NEWS}/search?q=rare+OR+unprecedented+OR+mystery+OR+discovery+when:2d&{IN_LOCALE}",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.72,
     ),
     FeedSource(
         "Google News - Investigations & Exposes",
         f"{GOOGLE_NEWS}/search?q=investigation+OR+expose+OR+whistleblower+OR+leaked+when:2d&{IN_LOCALE}",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.75,
     ),
     FeedSource(
@@ -173,7 +182,7 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "Google News - Space & Astronomy",
         f"{GOOGLE_NEWS}/search?q=ISRO+OR+NASA+OR+asteroid+OR+space+mission+when:2d&{IN_LOCALE}",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.75,
     ),
 
@@ -196,13 +205,13 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "PIB India - Press Releases",
         "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
-        "Current Affairs & Policy",
+        "Current Affairs",
         1.00,
     ),
     FeedSource(
         "WHO - News",
         "https://www.who.int/rss-feeds/news-English.xml",
-        "Health & Wellness News",
+        "Health News",
         1.00,
     ),
     FeedSource(
@@ -250,13 +259,13 @@ FEEDS: tuple[FeedSource, ...] = (
     FeedSource(
         "ScienceDaily - Top Science",
         "https://www.sciencedaily.com/rss/top/science.xml",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.92,
     ),
     FeedSource(
         "NASA - Breaking News",
         "https://www.nasa.gov/news-release/feed/",
-        "Uncovered & Shocking News",
+        "Unreported News",
         0.95,
     ),
 )

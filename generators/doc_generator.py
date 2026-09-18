@@ -43,14 +43,21 @@ SCORE_COLOURS = (
     (0,  RGBColor(0x8A, 0x8A, 0x8A)),   # rest filler
 )
 
+#: Instagram-fit verdict -> text colour, for the 4th column.
+FIT_COLOURS = {
+    "YES": RGBColor(0x0F, 0x7B, 0x3C),
+    "MAYBE": RGBColor(0xB8, 0x6E, 0x00),
+    "NO": RGBColor(0xA6, 0x1B, 0x1B),
+}
+FIT_ICONS = {"YES": "✅", "MAYBE": "➡", "NO": "❌"}
+
+#: Four columns, exactly as requested: headline, link, score, Instagram fit.
 COLUMNS = (
-    ("#", 0.38),
-    ("Reel Hook / Headline", 2.75),
-    ("Core Facts (2 sentences)", 3.45),
-    ("Score", 0.62),
-    ("Virality Drivers", 1.45),
-    ("Recommended CTA", 2.10),
-    ("Source", 1.15),
+    ("#", 0.35),
+    ("News Headline", 4.10),
+    ("News Link", 1.55),
+    ("Score", 0.65),
+    ("Fits Your Instagram? (based on account insights & past reels)", 4.15),
 )
 
 
@@ -195,9 +202,12 @@ def _cover(document: Document, start: datetime, end: datetime,
     legend.paragraph_format.space_after = Pt(12)
     run = legend.add_run(
         "Score key:  85-100 scorching  •  70-84 strong  •  55-69 workable  •  "
-        "below 55 backup.    Drivers:  High Share = send-to-a-friend energy  •  "
-        "High Save = utility the viewer will return to  •  "
-        "Debate/Comment Trigger = a genuine two-sided argument."
+        "below 55 backup.    Fit column:  ✅ YES = supported by this account's "
+        "own reel history or a strong score where no history exists yet  •  "
+        "➡ MAYBE = close to your average, worth trying  •  "
+        "❌ NO = this account's reels in that category have underperformed, "
+        "or the story is too weak to risk without history. "
+        "Fit is recalculated daily from data/benchmarks.json as your reels post."
     )
     run.font.size = Pt(8)
     run.font.italic = True
@@ -243,25 +253,44 @@ def _category_table(document: Document, entries: list[ScoredItem]) -> None:
             for cell in cells:
                 _shade(cell, ZEBRA_FILL)
 
+        # 1. #
         _write(cells[0], str(position), size=8.5, bold=True,
                align=WD_ALIGN_PARAGRAPH.CENTER, colour=MUTED)
-        _write(cells[1], entry.hook, size=9, bold=True, colour=BRAND_NAVY)
-        _write(cells[2], entry.core_facts, size=8.5)
-        _write(cells[3], str(entry.score), size=13, bold=True,
-               colour=_score_colour(entry.score), align=WD_ALIGN_PARAGRAPH.CENTER)
-        _write(cells[4], entry.drivers_text, size=8.5, bold=True)
-        _write(cells[5], entry.cta, size=8.5)
 
-        # Source cell: publisher + timestamp + clickable link.
-        cells[6].text = ""
-        meta = cells[6].paragraphs[0]
-        meta.paragraph_format.space_after = Pt(0)
-        run = meta.add_run(
+        # 2. News Headline - the original, plain journalistic headline
+        #    (not the reel hook - this column is for editorial reference).
+        _write(cells[1], entry.item.title, size=9, bold=True, colour=BRAND_NAVY)
+
+        # 3. News Link - publisher + timestamp, clickable through to the
+        #    actual source URL.
+        cells[2].text = ""
+        link_para = cells[2].paragraphs[0]
+        link_para.paragraph_format.space_after = Pt(0)
+        run = link_para.add_run(
             f"{entry.publisher}\n{entry.published_ist.strftime('%d %b, %I:%M %p')}\n"
         )
         run.font.size = Pt(7.5)
         run.font.color.rgb = MUTED
-        _hyperlink(meta, entry.link, "Open source")
+        _hyperlink(link_para, entry.link, "Open article")
+
+        # 4. Score
+        _write(cells[3], str(entry.score), size=13, bold=True,
+               colour=_score_colour(entry.score), align=WD_ALIGN_PARAGRAPH.CENTER)
+
+        # 5. Instagram fit - verdict (coloured, icon-led) + one-line reason,
+        #    derived from this account's own reel history where it exists.
+        cells[4].text = ""
+        fit_para = cells[4].paragraphs[0]
+        fit_para.paragraph_format.space_after = Pt(0)
+        verdict_run = fit_para.add_run(
+            f"{FIT_ICONS.get(entry.fit_verdict, '')} {entry.fit_verdict}\n"
+        )
+        verdict_run.font.size = Pt(9)
+        verdict_run.font.bold = True
+        verdict_run.font.color.rgb = FIT_COLOURS.get(entry.fit_verdict, INK)
+        reason_run = fit_para.add_run(entry.fit_reason)
+        reason_run.font.size = Pt(8)
+        reason_run.font.color.rgb = MUTED
 
     # Per-table scoring footnote keeps the audit trail visible to the editor.
     note = document.add_paragraph()

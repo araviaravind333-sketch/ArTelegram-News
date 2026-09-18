@@ -17,8 +17,22 @@ source link. Nothing is ever posted twice. When a window is quiet the bot
 stays silent rather than sending a "no news" notice.
 
 **Workflow 1b — Full briefing (`.docx`, daily at 07:00 IST or on demand)**
-The long-form counterpart: a styled Word document with **at least 7 stories
-per category** across 8 categories, uploaded to Telegram as a file.
+The long-form counterpart: a styled Word document covering 8 categories
+(India, World, Business, Sports, Technology, Health, Unreported, Current
+Affairs) plus a top "High-Virality Instagram Picks" summary — 9 tables in
+total, **at least 7 stories per section**. Every table has exactly 4 columns:
+
+| # | News Headline | News Link | Score | Fits Your Instagram? |
+|---|---|---|---|---|
+| 1 | (plain original headline) | publisher + clickable link | 1-100 | ✅/➡/❌ + a one-line reason |
+
+The 4th column is the one that reads *this* account's history: it pulls the
+per-category performance multiplier from `data/benchmarks.json` (written by
+the daily reels audit) and says outright whether that category has helped or
+hurt you before, or — with fewer than 5 reels tracked so far — falls back
+honestly to "no reel history yet" plus the story's own virality score, rather
+than pretending to know something it doesn't. Supports the same custom time
+windows as `/scan` (last 24h, a specific range, etc.).
 
 **Workflow 2 — Reels audit (daily, 10:00 AM IST)**
 Pulls the last 5-10 reels from the Instagram Graph API, compares them against
@@ -165,7 +179,7 @@ clearing the ledger re-posts the current window.
 config.py                      env loading, validation, secret masking, tunables
 scrapers/rss_collector.py      34 feeds -> fetch -> dedupe -> time-window filter
 scrapers/seen_store.py         cross-run memory so the pulse never repeats a story
-analyzer/virality_engine.py    classification, 1-100 scoring, hooks, CTAs, 8 categories
+analyzer/virality_engine.py    classification, 1-100 scoring, hooks, CTAs, Instagram-fit
 generators/doc_generator.py    styled landscape .docx with per-category tables
 generators/pulse_formatter.py  compact Telegram digest for the 20-minute pulse
 services/instagram_auditor.py  Graph API insights, benchmarks, 1M-view roadmap
@@ -189,10 +203,26 @@ data/seen.json                 posted-story ledger (git-ignored; cached in CI)
 Then `× historical multiplier` (0.80-1.20, from this account's own reel
 performance per category) plus a small driver bonus, clamped to 1-100.
 
+### The Instagram-fit column
+
+Every row's 4th column answers one question: *should this account post this
+category today?*
+
+- With **5+ reels tracked** in `data/benchmarks.json`, the verdict comes from
+  that category's real performance multiplier (±5% is "close to average" /
+  MAYBE; beyond that it's a clear YES or NO), e.g. *"India News reels
+  outperform your account average by 18%."*
+- With **fewer than 5 reels tracked**, there's no reliable per-category
+  signal yet, so the column says so plainly and falls back to the story's own
+  virality score instead of guessing.
+
 ### Editorial guarantees
 
 - **Hooks reframe, they never invent.** Core facts are derived only from the
-  headline and the publisher's own summary text.
+  headline and the publisher's own summary text. (The 4-column table shows
+  the plain original headline, not the reel hook — the hook, CTA and driver
+  tags are still computed internally and used by the 20-minute Telegram
+  pulse.)
 - **CTAs must be payable.** A "save before the deadline" CTA is only used when
   the story actually contains deadline language; the guard list is deliberately
   narrow.

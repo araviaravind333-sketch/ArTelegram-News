@@ -54,7 +54,7 @@ CATEGORY_LEXICON: dict[str, tuple[float, tuple[str, ...]]] = {
          "global", "worldwide", "international", "summit", "war", "ceasefire",
          "earthquake", "hurricane", "typhoon"),
     ),
-    "Uncovered & Shocking News": (
+    "Unreported News": (
         1.1,
         ("mystery", "mysterious", "unexplained", "bizarre", "strange", "rare",
          "first time", "unprecedented", "shock", "shocking", "stunned",
@@ -63,7 +63,7 @@ CATEGORY_LEXICON: dict[str, tuple[float, tuple[str, ...]]] = {
          "unbelievable", "asteroid", "alien", "deep sea", "ancient", "fossil",
          "archaeolog", "anomaly", "record-breaking"),
     ),
-    "Health & Wellness News": (
+    "Health News": (
         1.0,
         ("health", "disease", "virus", "outbreak", "vaccine", "cancer",
          "diabetes", "heart", "obesity", "mental health", "depression",
@@ -71,7 +71,7 @@ CATEGORY_LEXICON: dict[str, tuple[float, tuple[str, ...]]] = {
          "who", "hospital", "doctor", "patient", "drug", "medicine", "study",
          "researchers", "clinical", "wellness", "immunity", "gut"),
     ),
-    "Current Affairs & Policy": (
+    "Current Affairs": (
         1.0,
         ("policy", "bill", "law", "act", "parliament", "cabinet", "ministry",
          "minister", "government", "supreme court", "high court", "verdict",
@@ -79,14 +79,24 @@ CATEGORY_LEXICON: dict[str, tuple[float, tuple[str, ...]]] = {
          "gst", "regulation", "regulator", "reform", "notification",
          "guidelines", "amendment", "ordinance", "pib", "commission"),
     ),
-    "Business & Finance News": (
+    "Business News": (
         1.0,
         ("market", "sensex", "nifty", "stock", "shares", "ipo", "funding",
-         "startup", "acquisition", "merger", "revenue", "profit", "loss",
+         "acquisition", "merger", "revenue", "profit", "loss",
          "earnings", "quarter", "inflation", "gdp", "rbi", "bank", "loan",
-         "crypto", "bitcoin", "gold", "oil", "trade", "tariff", "economy",
+         "gold", "oil", "trade", "tariff", "economy",
          "investors", "valuation", "layoff", "hiring", "salary", "billion",
          "crore", "lakh crore"),
+    ),
+    "Technology News": (
+        1.0,
+        ("technology", "tech", "ai", "artificial intelligence", "software",
+         "app", "smartphone", "iphone", "android", "chip", "semiconductor",
+         "startup", "cybersecurity", "data breach", "hacked", "hacking",
+         "algorithm", "robot", "robotics", "electric vehicle",
+         "gadget", "launch event", "meta platforms", "google", "microsoft", "apple",
+         "openai", "chatgpt", "crypto", "bitcoin", "blockchain", "5g",
+         "satellite", "drone", "chatbot"),
     ),
     "Sports News": (
         1.0,
@@ -141,6 +151,12 @@ class ScoredItem:
     core_facts: str
     cta: str
     rationale: str = ""
+    #: "YES" / "MAYBE" / "NO" - whether this account's own reel history
+    #: supports posting this category. See build_instagram_fit().
+    fit_verdict: str = "MAYBE"
+    #: One-line reason backing fit_verdict, e.g. "India News reels outperform
+    #: your account average by 18%". Shown as the 4th report column.
+    fit_reason: str = ""
     #: Raw sub-scores, kept for debugging and for the audit trail.
     components: dict[str, float] = field(default_factory=dict)
 
@@ -161,6 +177,11 @@ class ScoredItem:
     def drivers_text(self) -> str:
         return " | ".join(self.drivers)
 
+    @property
+    def instagram_fit(self) -> str:
+        """The full "verdict — reason" text shown in the fit column."""
+        return f"{self.fit_verdict} — {self.fit_reason}" if self.fit_reason else self.fit_verdict
+
     def as_dict(self) -> dict:
         return {
             "category": self.category,
@@ -179,13 +200,23 @@ class ScoredItem:
 # Historical performance weighting
 # ---------------------------------------------------------------------------
 
+#: Below this many total tracked reels, a category "multiplier" is not a
+#: signal - it's an artifact. With 1 reel tracked, that reel's category
+#: trivially equals the account "average" (a mean of one number always
+#: equals itself), which would otherwise print as a misleading "performs
+#: close to your account average (+0%)" on the very first audit.
+MIN_TRACKED_REELS_FOR_SIGNAL = 5
+
+
 def load_category_performance() -> dict[str, float]:
     """Read the rolling Instagram benchmark file written by the auditor.
 
     Returns a multiplier per category centred on 1.0. Categories that have
     historically over-performed on this account get promoted into the
     High-Virality Picks bucket; under-performers get damped. A missing or
-    unreadable file simply yields an empty dict (all multipliers = 1.0).
+    unreadable file, or too few tracked reels to mean anything yet, yields an
+    empty dict (all multipliers = 1.0, and the Instagram-fit column falls
+    back to judging by virality score alone).
     """
     path = config.BENCHMARK_FILE
     if not path.is_file():
@@ -194,6 +225,16 @@ def load_category_performance() -> dict[str, float]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         log.warning("Could not read benchmarks (%s): %s", path, exc)
+        return {}
+
+    tracked = payload.get("reels", {})
+    if not isinstance(tracked, dict) or len(tracked) < MIN_TRACKED_REELS_FOR_SIGNAL:
+        log.info(
+            "Only %d reel(s) tracked (need %d) - not enough history yet for "
+            "category performance signals.",
+            len(tracked) if isinstance(tracked, dict) else 0,
+            MIN_TRACKED_REELS_FOR_SIGNAL,
+        )
         return {}
 
     by_category = payload.get("category_performance", {})
@@ -526,10 +567,69 @@ def build_cta(item: NewsItem, drivers: list[str], category: str) -> str:
 # Briefing assembly
 # ---------------------------------------------------------------------------
 
+#: Multiplier bands beyond which this account's own history is treated as a
+#: real signal rather than noise. Mirrors the +/-20% clamp in
+#: load_category_performance(), so "close to average" and "no data" don't
+#: get conflated: a multiplier is only ever produced for a category this
+#: account has actually posted reels in.
+FIT_OUTPERFORM_THRESHOLD = 1.05
+FIT_UNDERPERFORM_THRESHOLD = 0.95
+
+#: Below this virality score, a category with no reel history yet is called
+#: NO rather than YES/MAYBE - "post it, we have no data" is not useful advice
+#: for a weak story.
+FIT_NO_HISTORY_WEAK_SCORE = 45
+FIT_NO_HISTORY_STRONG_SCORE = 65
+
+
+def build_instagram_fit(
+    category: str, score: int, performance: dict[str, float]
+) -> tuple[str, str]:
+    """Whether this story's category fits the account, per its reel history.
+
+    ``performance`` is the per-category view multiplier from
+    load_category_performance() (see [[services/instagram_auditor.py]]'s
+    save_history(), which derives it from every reel this account has ever
+    posted). A category only appears in that dict once the account has
+    actually posted a reel in it - anything else falls back to the story's
+    own virality score, since there is no account-specific signal to use yet.
+
+    Returns ``(verdict, reason)`` where verdict is "YES" / "MAYBE" / "NO".
+    """
+    multiplier = performance.get(category)
+
+    if multiplier is None:
+        if score >= FIT_NO_HISTORY_STRONG_SCORE:
+            return "YES", (
+                f"no reel history yet in {category}, but its virality score "
+                f"({score}) is strong enough to try"
+            )
+        if score >= FIT_NO_HISTORY_WEAK_SCORE:
+            return "MAYBE", (
+                f"no reel history yet in {category}; virality score "
+                f"({score}) is only moderate"
+            )
+        return "NO", (
+            f"no reel history yet in {category}, and virality score "
+            f"({score}) is too weak to risk it"
+        )
+
+    pct = round((multiplier - 1) * 100)
+    if multiplier >= FIT_OUTPERFORM_THRESHOLD:
+        return "YES", f"{category} reels outperform your account average by {pct}%"
+    if multiplier <= FIT_UNDERPERFORM_THRESHOLD:
+        return "NO", (
+            f"{category} content has underperformed on this account by "
+            f"{abs(pct)}% so far"
+        )
+    return "MAYBE", f"{category} performs close to your account average ({pct:+d}%)"
+
+
 def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
     category = classify(item)
     drivers = detect_drivers(item)
     score, components, rationale = score_item(item, category, drivers, performance)
+    fit_verdict, fit_reason = build_instagram_fit(category, score, performance)
     return ScoredItem(
         item=item,
         category=category,
@@ -539,6 +639,8 @@ def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
         core_facts=build_core_facts(item),
         cta=build_cta(item, drivers, category),
         rationale=rationale,
+        fit_verdict=fit_verdict,
+        fit_reason=fit_reason,
         components=components,
     )
 
