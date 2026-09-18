@@ -53,6 +53,7 @@ jobs:
           INSTA_ACCESS_TOKEN: ${{ secrets.INSTA_ACCESS_TOKEN }}
           INSTA_USER_ID: ${{ secrets.INSTA_USER_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python main.py check
 
       - name: Run reels audit and push to Telegram
@@ -62,6 +63,7 @@ jobs:
           INSTA_ACCESS_TOKEN: ${{ secrets.INSTA_ACCESS_TOKEN }}
           INSTA_USER_ID: ${{ secrets.INSTA_USER_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           TZ: Asia/Kolkata
         run: |
           python main.py audit \

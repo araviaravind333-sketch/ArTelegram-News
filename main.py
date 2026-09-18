@@ -36,6 +36,7 @@ import config
 from analyzer import virality_engine
 from generators import doc_generator, pulse_formatter
 from scrapers import rss_collector, seen_store
+from services import youtube_trends
 from services.telegram_notifier import TelegramError, TelegramNotifier
 
 log = logging.getLogger("aravindnews24")
@@ -216,7 +217,8 @@ def run_scan(
             "Either every source is unreachable or the window is too narrow."
         )
 
-    briefing = virality_engine.build_briefing(items)
+    youtube_topics = youtube_trends.fetch_trending_topics()
+    briefing = virality_engine.build_briefing(items, youtube_topics=youtube_topics)
 
     if refine:
         # Only the picks are sent to Claude: they are what gets produced today,
@@ -293,7 +295,10 @@ def run_pulse(
         return 0
 
     performance = virality_engine.load_category_performance()
-    scored = [virality_engine.analyse(item, performance) for item in fresh]
+    youtube_topics = youtube_trends.fetch_trending_topics()
+    scored = [
+        virality_engine.analyse(item, performance, youtube_topics) for item in fresh
+    ]
 
     threshold = config.PULSE_MIN_SCORE if min_score is None else min_score
     strong = [entry for entry in scored if entry.score >= threshold]
@@ -369,7 +374,8 @@ def run_audit(
         try:
             start, end = parse_window(f"{config.DEFAULT_SCAN_HOURS}h")
             items, _ = rss_collector.collect(start, end, widen_if_thin=25)
-            briefing = virality_engine.build_briefing(items)
+            youtube_topics = youtube_trends.fetch_trending_topics()
+            briefing = virality_engine.build_briefing(items, youtube_topics=youtube_topics)
             picks = virality_engine.top_picks(briefing, 3)
             virality_engine.refine_with_claude(picks)
         except Exception as exc:
@@ -522,10 +528,12 @@ def run_check() -> int:
     print("Configuration check")
     print("-" * 52)
     ok = True
+    optional = {"ANTHROPIC_API_KEY", "YOUTUBE_API_KEY"}
     groups = {
         "Telegram (required for delivery)": config.TELEGRAM_SECRETS,
         "Instagram (required for the audit)": config.INSTAGRAM_SECRETS,
         "Claude (optional refinement)": ("ANTHROPIC_API_KEY",),
+        "YouTube (optional trend signal)": ("YOUTUBE_API_KEY",),
     }
     for label, names in groups.items():
         print(f"\n{label}")
@@ -533,7 +541,7 @@ def run_check() -> int:
             value = config.get(name)
             status = "set" if value else "MISSING"
             print(f"  {name:<22} {status:<8} {config.masked(value)}")
-            if not value and name != "ANTHROPIC_API_KEY":
+            if not value and name not in optional:
                 ok = False
     print(f"\nFeeds registered: {len(rss_collector.FEEDS)}")
     print(f"Categories:       {len(config.CATEGORIES)}")

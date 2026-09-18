@@ -169,6 +169,12 @@ def anthropic_api_key() -> str | None:
     return get("ANTHROPIC_API_KEY")
 
 
+def youtube_api_key() -> str | None:
+    """Optional. When absent, Top Picks ranking skips the YouTube-trending
+    signal and falls back to Instagram history + corroboration alone."""
+    return get("YOUTUBE_API_KEY")
+
+
 # ---------------------------------------------------------------------------
 # Tunables (safe defaults; overridable via env, none of them secret)
 # ---------------------------------------------------------------------------

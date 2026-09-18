@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import config
-from scrapers.rss_collector import NewsItem
+from scrapers.rss_collector import NewsItem, jaccard, title_tokens
 
 log = logging.getLogger(__name__)
 
@@ -157,6 +157,11 @@ class ScoredItem:
     #: One-line reason backing fit_verdict, e.g. "India News reels outperform
     #: your account average by 18%". Shown as the 4th report column.
     fit_reason: str = ""
+    #: True when this story's headline overlaps a currently-trending YouTube
+    #: video title (see services/youtube_trends.py). Feeds both the score
+    #: (a small bonus) and Top Picks ranking (an explicit tie-break ahead of
+    #: raw score). Always False when YOUTUBE_API_KEY is not configured.
+    youtube_trending: bool = False
     #: Raw sub-scores, kept for debugging and for the audit trail.
     components: dict[str, float] = field(default_factory=dict)
 
@@ -307,11 +312,34 @@ def detect_drivers(item: NewsItem) -> list[str]:
 # Scoring
 # ---------------------------------------------------------------------------
 
+#: How closely a headline's significant words must overlap a single
+#: trending video's title to count as the same topic, not a coincidental
+#: shared word. Mirrors the near-duplicate threshold used for feed dedup.
+YOUTUBE_TREND_JACCARD_THRESHOLD = 0.30
+YOUTUBE_TREND_BONUS = 8.0
+
+
+def matches_youtube_trend(
+    item: NewsItem, trending_topics: tuple[frozenset[str], ...]
+) -> bool:
+    """True if this headline overlaps a currently-trending YouTube video."""
+    if not trending_topics:
+        return False
+    story_tokens = title_tokens(item.title)
+    if not story_tokens:
+        return False
+    return any(
+        jaccard(story_tokens, topic) >= YOUTUBE_TREND_JACCARD_THRESHOLD
+        for topic in trending_topics
+    )
+
+
 def score_item(
     item: NewsItem,
     category: str,
     drivers: list[str],
     performance: dict[str, float],
+    youtube_trending: bool = False,
 ) -> tuple[int, dict[str, float], str]:
     """Return a 1-100 virality score, its components, and a short rationale.
 
@@ -323,6 +351,8 @@ def score_item(
     * trigger load   22  - share + save + debate language density
     * curiosity gap  10  - question and reveal framing
     * specificity     8  - concrete numbers in the headline
+    * YouTube trend   8  - headline matches a currently-trending video title
+                           (only when YOUTUBE_API_KEY is configured)
     """
     text = _haystack(item)
     parts: dict[str, float] = {}
@@ -345,6 +375,8 @@ def score_item(
 
     numbers = len(_NUMBER_RE.findall(item.title))
     parts["specificity"] = round(min(8.0, 4.0 * numbers), 2)
+
+    parts["youtube_trend"] = YOUTUBE_TREND_BONUS if youtube_trending else 0.0
 
     base = sum(parts.values())
 
@@ -625,10 +657,17 @@ def build_instagram_fit(
     return "MAYBE", f"{category} performs close to your account average ({pct:+d}%)"
 
 
-def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
+def analyse(
+    item: NewsItem,
+    performance: dict[str, float],
+    youtube_topics: tuple[frozenset[str], ...] = (),
+) -> ScoredItem:
     category = classify(item)
     drivers = detect_drivers(item)
-    score, components, rationale = score_item(item, category, drivers, performance)
+    trending = matches_youtube_trend(item, youtube_topics)
+    score, components, rationale = score_item(
+        item, category, drivers, performance, trending
+    )
     fit_verdict, fit_reason = build_instagram_fit(category, score, performance)
     return ScoredItem(
         item=item,
@@ -641,6 +680,7 @@ def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
         rationale=rationale,
         fit_verdict=fit_verdict,
         fit_reason=fit_reason,
+        youtube_trending=trending,
         components=components,
     )
 
@@ -651,17 +691,25 @@ def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
 _FIT_RANK = {"YES": 2, "MAYBE": 1, "NO": 0}
 
 
-def _pick_priority(entry: ScoredItem) -> tuple[int, int, int]:
-    """Sort key for Top Picks: account fit first, then score, then reach.
+def _pick_priority(entry: ScoredItem) -> tuple[int, int, int, int]:
+    """Sort key for Top Picks: account fit, then YouTube trend, then score.
 
-    This is what ties Top Picks to "account insight and past reels" rather
-    than raw virality alone: two equally-scored stories are broken by which
-    one this account's own history (via fit_verdict) actually supports, then
+    This is what ties Top Picks to "Instagram reel history, account insight,
+    and cross-platform trend" rather than raw virality alone: two equally-
+    scored stories are broken first by which one this account's own history
+    (fit_verdict) actually supports, then by whether it is independently
+    trending on YouTube right now (youtube_trending - see
+    services/youtube_trends.py; no-op when YOUTUBE_API_KEY is unset), then
     by corroboration - how many independent outlets are carrying it, the
-    free-tier proxy for cross-platform buzz (see the module docstring note on
-    Twitter/YouTube trend data).
+    free-tier proxy used in place of Twitter/X, whose free API tier cannot
+    read trends or search at all.
     """
-    return (_FIT_RANK.get(entry.fit_verdict, 1), entry.score, entry.item.corroboration)
+    return (
+        _FIT_RANK.get(entry.fit_verdict, 1),
+        int(entry.youtube_trending),
+        entry.score,
+        entry.item.corroboration,
+    )
 
 
 def build_briefing(
@@ -670,6 +718,7 @@ def build_briefing(
     performance: dict[str, float] | None = None,
     max_per_category: int | None = None,
     min_picks: int | None = None,
+    youtube_topics: tuple[frozenset[str], ...] = (),
 ) -> dict[str, list[ScoredItem]]:
     """Score everything and lay it out across the eight categories.
 
@@ -688,7 +737,7 @@ def build_briefing(
     picks_target = max(minimum, min_picks or config.MIN_PICKS)
     perf = load_category_performance() if performance is None else performance
 
-    scored = [analyse(item, perf) for item in items]
+    scored = [analyse(item, perf, youtube_topics) for item in items]
     scored.sort(key=lambda s: -s.score)
 
     # Native buckets, one per assignable category, each already score-sorted
@@ -771,6 +820,7 @@ def build_briefing(
                 rationale=candidate.rationale + " (cross-filed)",
                 fit_verdict=candidate.fit_verdict,
                 fit_reason=candidate.fit_reason,
+                youtube_trending=candidate.youtube_trending,
                 components=candidate.components,
             )
             bucket.append(filler)

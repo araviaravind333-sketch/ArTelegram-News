@@ -60,6 +60,7 @@ Add these under **Settings → Secrets and variables → Actions**:
 | `INSTA_ACCESS_TOKEN` | the audit | Meta Graph API Explorer, scopes `instagram_basic` + `instagram_manage_insights` |
 | `INSTA_USER_ID` | the audit | `GET /me/accounts` → `instagram_business_account.id` |
 | `ANTHROPIC_API_KEY` | optional | [console.anthropic.com](https://console.anthropic.com) — polishes hooks and CTAs; everything works without it |
+| `YOUTUBE_API_KEY` | optional | [console.cloud.google.com](https://console.cloud.google.com/apis/credentials) → enable "YouTube Data API v3" → create an API key; adds a "trending on YouTube right now" signal to Top Picks ranking. Free, no OAuth. |
 
 Nothing is ever hardcoded. Every value is read through `os.getenv()` in
 `config.py`, and `.env` is git-ignored.
@@ -202,9 +203,25 @@ data/seen.json                 posted-story ledger (git-ignored; cached in CI)
 | Trigger load | 22 | share + save + debate language density |
 | Curiosity gap | 10 | question and reveal framing in the headline |
 | Specificity | 8 | concrete numbers in the headline |
+| YouTube trend | 8 | headline overlaps a currently-trending YouTube video title (needs `YOUTUBE_API_KEY`; 0 otherwise) |
 
 Then `× historical multiplier` (0.80-1.20, from this account's own reel
 performance per category) plus a small driver bonus, clamped to 1-100.
+
+### How Top Picks are chosen
+
+Beyond the score above, the "High-Virality Instagram Picks" section (**always
+at least 10 stories**) ranks candidates by, in order: (1) this account's own
+Instagram-fit verdict — a story its reel history backs beats an equally-scored
+one it doesn't, (2) whether it's independently trending on YouTube right now,
+(3) the virality score itself, (4) corroboration (how many independent
+outlets are covering it — the free-tier proxy used here in place of Twitter/X,
+whose free API tier cannot read trends or run a search at all, so there is no
+free way to build an equivalent signal for it).
+
+Every story is placed in **exactly one section** — Top Picks and the category
+tables never repeat the same story, and a story cross-filed into a thin
+category is removed from wherever else it might have been considered.
 
 ### The Instagram-fit column
 

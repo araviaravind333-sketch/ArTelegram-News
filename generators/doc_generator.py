@@ -259,7 +259,10 @@ def _category_table(document: Document, entries: list[ScoredItem]) -> None:
 
         # 2. News Headline - the original, plain journalistic headline
         #    (not the reel hook - this column is for editorial reference).
-        _write(cells[1], entry.item.title, size=9, bold=True, colour=BRAND_NAVY)
+        headline = entry.item.title
+        if entry.youtube_trending:
+            headline = f"\U0001F53A TRENDING ON YOUTUBE — {headline}"
+        _write(cells[1], headline, size=9, bold=True, colour=BRAND_NAVY)
 
         # 3. News Link - publisher + timestamp, clickable through to the
         #    actual source URL.
