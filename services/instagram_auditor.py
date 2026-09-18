@@ -33,8 +33,12 @@ MEDIA_FIELDS = (
 
 #: Requested in this order; unsupported names are dropped automatically,
 #: because Meta retires insight metrics without warning across API versions.
+#: "plays" was Meta's original reels-view metric; it has since been retired
+#: in favour of "views" (ReelMetrics.views already falls back to "plays" for
+#: any account still on an older Graph API version that only reports that
+#: name, so nothing is lost by not requesting it directly).
 REEL_METRICS = (
-    "views", "reach", "plays", "total_interactions", "likes", "comments",
+    "views", "reach", "total_interactions", "likes", "comments",
     "shares", "saved", "ig_reels_avg_watch_time",
     "ig_reels_video_view_total_time",
 )
@@ -297,10 +301,9 @@ class InstagramAuditor:
                     f"{media_id}/insights", {"metric": ",".join(metrics)}
                 )
             except InstagramError as exc:
-                unsupported = self._unsupported_metric(str(exc), metrics)
-                if unsupported:
-                    log.debug("Dropping unsupported metric %r", unsupported)
-                    metrics.remove(unsupported)
+                dropped = self._drop_unsupported_metrics(str(exc), metrics)
+                if dropped:
+                    log.debug("Dropping unsupported metric(s) %r", dropped)
                     continue
                 log.warning("Insights unavailable for %s: %s", media_id, exc)
                 return {}
@@ -317,16 +320,42 @@ class InstagramAuditor:
             return values
         return {}
 
-    @staticmethod
-    def _unsupported_metric(message: str, metrics: list[str]) -> str | None:
-        """Identify which requested metric the error message is complaining about."""
+    #: Matches Meta's actual rejection format, e.g.:
+    #: "(#100) metric[0] must be one of the following values: reach, likes, ..."
+    #: It never names the *invalid* metric - only the allowed set - so the bad
+    #: one can only be found by set difference against what was requested.
+    _ALLOWED_VALUES_RE = re.compile(
+        r"must be one of the following values:\s*([a-z0-9_,\s]+)", re.I
+    )
+
+    @classmethod
+    def _drop_unsupported_metrics(cls, message: str, metrics: list[str]) -> list[str]:
+        """Remove (in place) every requested metric the API just rejected.
+
+        Returns the list of metrics removed, so the caller can tell "nothing
+        changed, stop retrying" apart from "trimmed the list, try again".
+        """
+        match = cls._ALLOWED_VALUES_RE.search(message)
+        if match:
+            allowed = {m.strip().lower() for m in match.group(1).split(",") if m.strip()}
+            invalid = [m for m in metrics if m.lower() not in allowed]
+            for m in invalid:
+                metrics.remove(m)
+            return invalid
+
+        # Fallback for any other Meta error phrasing that does name the metric
+        # directly (e.g. "metric plays is not supported for this media type").
+        # Word-boundary match, longest name first: metric names can be
+        # substrings of each other ("views" inside "total_views"), and a
+        # naive substring scan would grab the wrong one.
         lowered = message.lower()
         if "metric" not in lowered and "unsupported" not in lowered:
-            return None
-        for metric in metrics:
-            if metric.lower() in lowered:
-                return metric
-        return None
+            return []
+        for m in sorted(metrics, key=len, reverse=True):
+            if re.search(rf"\b{re.escape(m.lower())}\b", lowered):
+                metrics.remove(m)
+                return [m]
+        return []
 
 
 # ---------------------------------------------------------------------------
