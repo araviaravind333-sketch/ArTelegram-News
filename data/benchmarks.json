@@ -1,0 +1,30 @@
+{
+  "reels": {
+    "18126523798781343": {
+      "media_id": "18126523798781343",
+      "permalink": "https://www.instagram.com/reel/DdYkH8DEmsi/",
+      "posted_at": "2026-09-17T09:43:07+00:00",
+      "hook_type": "Stat/number hook",
+      "topic": "India News",
+      "views": 0.0,
+      "reach": 0.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 0.0,
+      "avg_watch_seconds": 0.0
+    }
+  },
+  "benchmarks": {
+    "views": 0.0,
+    "share_rate": 0.0,
+    "save_rate": 0.0,
+    "comment_rate": 0.0,
+    "engagement_rate": 0.0,
+    "view_through": 0.0,
+    "sample_size": 1
+  },
+  "category_performance": {},
+  "updated_at": "2026-09-18T17:10:15.613311+00:00"
+}
