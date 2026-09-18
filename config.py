@@ -183,6 +183,9 @@ MIN_ITEMS_PER_CATEGORY = get_int("MIN_ITEMS_PER_CATEGORY", 7)
 #: is a data dump rather than an editorial briefing. Only the highest-scoring
 #: stories survive the cut.
 MAX_ITEMS_PER_CATEGORY = get_int("MAX_ITEMS_PER_CATEGORY", 10)
+#: The "High-Virality Instagram Picks" summary section must clear this many
+#: stories on its own, drawn from across all 8 categories.
+MIN_PICKS = get_int("MIN_PICKS", 10)
 REELS_AUDIT_COUNT = get_int("REELS_AUDIT_COUNT", 10)
 
 FEED_TIMEOUT_SECONDS = get_int("FEED_TIMEOUT_SECONDS", 20)

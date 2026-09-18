@@ -645,67 +645,120 @@ def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
     )
 
 
+#: Rank order for the Instagram-fit verdict when choosing Top Picks: a story
+#: this account's own reel history backs (or, absent history, a strong
+#: virality score) outranks one it doesn't, at equal virality score.
+_FIT_RANK = {"YES": 2, "MAYBE": 1, "NO": 0}
+
+
+def _pick_priority(entry: ScoredItem) -> tuple[int, int, int]:
+    """Sort key for Top Picks: account fit first, then score, then reach.
+
+    This is what ties Top Picks to "account insight and past reels" rather
+    than raw virality alone: two equally-scored stories are broken by which
+    one this account's own history (via fit_verdict) actually supports, then
+    by corroboration - how many independent outlets are carrying it, the
+    free-tier proxy for cross-platform buzz (see the module docstring note on
+    Twitter/YouTube trend data).
+    """
+    return (_FIT_RANK.get(entry.fit_verdict, 1), entry.score, entry.item.corroboration)
+
+
 def build_briefing(
     items: list[NewsItem],
     min_per_category: int | None = None,
     performance: dict[str, float] | None = None,
     max_per_category: int | None = None,
+    min_picks: int | None = None,
 ) -> dict[str, list[ScoredItem]]:
     """Score everything and lay it out across the eight categories.
 
-    Guarantees ``min_per_category`` entries per category whenever the raw
-    supply allows it. Categories that are naturally thin (e.g. Sports on a
-    quiet Tuesday) are topped up from the highest-scoring unused stories,
-    which are then relabelled to the category they are filling — the source
-    link and facts stay untouched, only the section placement changes.
+    Every story is placed in exactly one section - never repeated across Top
+    Picks and its category table, and never cross-filed into two different
+    categories at once. Guarantees ``min_per_category`` entries per category
+    and ``min_picks`` entries in Top Picks whenever the raw supply allows it;
+    categories that are naturally thin (e.g. Sports on a quiet Tuesday) are
+    topped up from the highest-scoring *still-unused* stories, relabelled to
+    the category they are filling - the source link and facts stay
+    untouched, only the section placement changes, and it happens at most
+    once per story.
     """
     minimum = min_per_category or config.MIN_ITEMS_PER_CATEGORY
     maximum = max(minimum, max_per_category or config.MAX_ITEMS_PER_CATEGORY)
+    picks_target = max(minimum, min_picks or config.MIN_PICKS)
     perf = load_category_performance() if performance is None else performance
 
     scored = [analyse(item, perf) for item in items]
-    scored.sort(key=lambda s: (-s.score, s.item.published), reverse=False)
     scored.sort(key=lambda s: -s.score)
 
-    buckets: dict[str, list[ScoredItem]] = {c: [] for c in config.CATEGORIES}
+    # Native buckets, one per assignable category, each already score-sorted
+    # because `scored` is. `used_links` is the single source of truth for
+    # "has this story been placed anywhere yet" across every phase below.
+    native: dict[str, list[ScoredItem]] = {c: [] for c in config.ASSIGNABLE_CATEGORIES}
     for entry in scored:
-        buckets[entry.category].append(entry)
-
-    # 1. High-Virality Instagram Picks: the best of everything, one story per
-    #    category at most until we have the minimum, so the picks reel slate
-    #    is not seven variations of the same story.
-    picks: list[ScoredItem] = []
+        native[entry.category].append(entry)
     used_links: set[str] = set()
-    for pass_no in range(4):
+
+    # 1. High-Virality Instagram Picks - one story per category first (so the
+    #    picks slate isn't ten variations of the same category), ranked by
+    #    account fit and corroboration ahead of raw score; topped up from the
+    #    overall best remainder if categories alone can't reach the target.
+    #    Every story chosen here is removed from further consideration, so it
+    #    cannot also appear in its category table.
+    picks: list[ScoredItem] = []
+    cursor = {c: 0 for c in config.ASSIGNABLE_CATEGORIES}
+    progressed = True
+    while len(picks) < picks_target and progressed:
+        progressed = False
         for category in config.ASSIGNABLE_CATEGORIES:
-            for entry in buckets[category]:
-                if entry.link in used_links:
-                    continue
+            bucket = native[category]
+            i = cursor[category]
+            while i < len(bucket) and bucket[i].link in used_links:
+                i += 1
+            cursor[category] = i
+            if i < len(bucket):
+                entry = bucket[i]
                 picks.append(entry)
                 used_links.add(entry.link)
-                break
-            if len(picks) >= minimum and pass_no >= 1:
-                break
-        if len(picks) >= minimum:
-            break
-    picks.sort(key=lambda s: -s.score)
-    picks = picks[:maximum]
-    buckets["High-Virality Instagram Picks"] = picks
+                cursor[category] = i + 1
+                progressed = True
+                if len(picks) >= picks_target:
+                    break
 
-    # 2. Trim every category to the ceiling, keeping the strongest stories,
-    #    then top up anything still short from the unused remainder.
-    assigned_links = {e.link for e in picks}
-    spare = [e for e in scored if e.link not in assigned_links]
-    spare_index = 0
+    if len(picks) < picks_target:
+        for entry in sorted(scored, key=_pick_priority, reverse=True):
+            if len(picks) >= picks_target:
+                break
+            if entry.link in used_links:
+                continue
+            picks.append(entry)
+            used_links.add(entry.link)
+
+    picks.sort(key=_pick_priority, reverse=True)
+    buckets: dict[str, list[ScoredItem]] = {
+        "High-Virality Instagram Picks": picks[: max(picks_target, maximum)]
+    }
+
+    # 2. Each category table, drawn only from stories not already in Picks,
+    #    trimmed to the ceiling.
     for category in config.ASSIGNABLE_CATEGORIES:
-        buckets[category].sort(key=lambda s: -s.score)
-        buckets[category] = buckets[category][:maximum]
+        bucket = [e for e in native[category] if e.link not in used_links][:maximum]
+        for entry in bucket:
+            used_links.add(entry.link)
+        buckets[category] = bucket
+
+    # 3. Top up any category still short of `minimum`, pulling only stories
+    #    that have not been placed anywhere yet (picks or another category).
+    #    `overflow` is therefore consumed exactly once across every category,
+    #    so the same story can never land in two different tables.
+    overflow = [e for e in scored if e.link not in used_links]
+    overflow_index = 0
+    for category in config.ASSIGNABLE_CATEGORIES:
         bucket = buckets[category]
-        bucket_links = {e.link for e in bucket}
-        while len(bucket) < minimum and spare_index < len(spare):
-            candidate = spare[spare_index]
-            spare_index += 1
-            if candidate.link in bucket_links or candidate.category == category:
+        while len(bucket) < minimum and overflow_index < len(overflow):
+            candidate = overflow[overflow_index]
+            overflow_index += 1
+            if candidate.link in used_links:
                 continue
             filler = ScoredItem(
                 item=candidate.item,
@@ -716,17 +769,20 @@ def build_briefing(
                 core_facts=candidate.core_facts,
                 cta=candidate.cta,
                 rationale=candidate.rationale + " (cross-filed)",
+                fit_verdict=candidate.fit_verdict,
+                fit_reason=candidate.fit_reason,
                 components=candidate.components,
             )
             bucket.append(filler)
-            bucket_links.add(candidate.link)
+            used_links.add(candidate.link)
         bucket.sort(key=lambda s: -s.score)
 
     for category, bucket in buckets.items():
-        if len(bucket) < minimum:
+        want = picks_target if category == "High-Virality Instagram Picks" else minimum
+        if len(bucket) < want:
             log.warning(
                 "Category %r has only %d/%d items - the feed window was thin.",
-                category, len(bucket), minimum,
+                category, len(bucket), want,
             )
     return buckets
 
