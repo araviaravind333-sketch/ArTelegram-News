@@ -1,0 +1,55 @@
+# ---- Secrets: never commit ------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+token.json
+credentials.json
+secrets.json
+service_account*.json
+
+# ---- Generated artefacts --------------------------------------------------
+*.docx
+~$*.docx
+output/*
+!output/.gitkeep
+*.log
+
+# NOTE: data/benchmarks.json is deliberately NOT ignored. It is the rolling
+# reel history that the audit writes and the virality engine reads back, and
+# CI commits it after each run so the feedback loop survives between jobs.
+# data/seen.json IS ignored: it is high-churn pulse state (72 writes a day)
+# and lives in the GitHub Actions cache, not in git history.
+data/seen.json
+
+# ---- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# ---- Virtualenvs ----------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Tooling / OS ---------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,89 @@
+name: News Pulse (every 20 minutes)
+
+# Posts only what is new since the previous run, straight into the Telegram
+# chat. '0,20,40 * * * *' is an exact 20-minute cadence; a bare '*/20' would
+# also work, but the explicit minutes make the schedule obvious in the log.
+#
+# GitHub's scheduler is best-effort and can lag by several minutes under load.
+# That does not cause gaps or repeats here: the seen-store, not the clock,
+# decides what has already been posted, and the scan looks back 90 minutes to
+# absorb both scheduler lag and RSS publication lag.
+on:
+  schedule:
+    - cron: '0,20,40 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the message instead of sending it'
+        type: boolean
+        default: false
+      reset_seen:
+        description: 'Clear the seen-store first (will re-post recent stories)'
+        type: boolean
+        default: false
+      limit:
+        description: 'Max stories in this post'
+        type: string
+        default: ''
+
+# Never cancel a run in flight: it would abort after Telegram delivery but
+# before the seen-store is saved, and those stories would post twice.
+concurrency:
+  group: news-pulse
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pulse:
+    name: Post new stories to Telegram
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The seen-store is high-churn state (72 writes a day), so it lives in
+      # the Actions cache rather than in git history. A rolling key means each
+      # run saves a fresh entry and restores the most recent one.
+      - name: Restore seen-store
+        uses: actions/cache/restore@v4
+        with:
+          path: data/seen.json
+          key: news-seen-${{ github.run_id }}
+          restore-keys: |
+            news-seen-
+
+      - name: Post the pulse
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TZ: Asia/Kolkata
+        run: |
+          python main.py pulse \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.reset_seen && '--reset-seen' || '' }} \
+            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+
+      # always(): even a failed or silent run may have pruned expired entries,
+      # and losing the store would cause the next run to re-post old stories.
+      - name: Save seen-store
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/seen.json
+          key: news-seen-${{ github.run_id }}

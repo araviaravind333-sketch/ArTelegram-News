@@ -1,0 +1,3 @@
+# Code runs on ubuntu-latest runners: store and check out with LF endings.
+* text=auto eol=lf
+*.docx binary

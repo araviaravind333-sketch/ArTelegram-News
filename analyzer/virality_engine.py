@@ -1,0 +1,773 @@
+"""Virality scoring, category routing, hook and CTA engineering.
+
+The engine is deterministic by default: every score is reproducible from the
+article itself plus the historical Instagram benchmarks on disk. When
+``ANTHROPIC_API_KEY`` is present the top picks are additionally passed through
+Claude for hook/CTA polish, but the numeric scoring never depends on it, so a
+missing key degrades quality, not correctness.
+
+Editorial rule enforced throughout: a hook may *frame* a fact, it may never
+invent one. Core facts are derived only from the headline and the publisher's
+own summary text.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import config
+from scrapers.rss_collector import NewsItem
+
+log = logging.getLogger(__name__)
+
+# Drivers, in the vocabulary the brief asks for.
+DRIVER_SHARE = "High Share"
+DRIVER_SAVE = "High Save"
+DRIVER_DEBATE = "Debate/Comment Trigger"
+
+
+# ---------------------------------------------------------------------------
+# Lexicons
+# ---------------------------------------------------------------------------
+
+#: category -> (weight, keywords). Weight scales how strongly a hit counts.
+CATEGORY_LEXICON: dict[str, tuple[float, tuple[str, ...]]] = {
+    "India News": (
+        1.0,
+        ("india", "indian", "delhi", "mumbai", "bengaluru", "chennai", "kolkata",
+         "hyderabad", "pune", "ahmedabad", "kerala", "tamil nadu", "karnataka",
+         "maharashtra", "uttar pradesh", "bihar", "gujarat", "punjab", "assam",
+         "rajasthan", "odisha", "telangana", "modi", "rahul gandhi", "bjp",
+         "congress", "lok sabha", "rajya sabha", "isro", "ipl", "rupee",
+         "new delhi", "bharat"),
+    ),
+    "World News": (
+        1.0,
+        ("us", "usa", "china", "russia", "ukraine", "israel", "gaza", "europe",
+         "uk", "britain", "france", "germany", "japan", "korea", "pakistan",
+         "bangladesh", "sri lanka", "nepal", "afghanistan", "iran", "saudi",
+         "united nations", "nato", "white house", "kremlin", "brussels",
+         "global", "worldwide", "international", "summit", "war", "ceasefire",
+         "earthquake", "hurricane", "typhoon"),
+    ),
+    "Uncovered & Shocking News": (
+        1.1,
+        ("mystery", "mysterious", "unexplained", "bizarre", "strange", "rare",
+         "first time", "unprecedented", "shock", "shocking", "stunned",
+         "discovery", "discovered", "hidden", "secret", "leaked", "exposed",
+         "expose", "whistleblower", "investigation", "scandal", "cover-up",
+         "unbelievable", "asteroid", "alien", "deep sea", "ancient", "fossil",
+         "archaeolog", "anomaly", "record-breaking"),
+    ),
+    "Health & Wellness News": (
+        1.0,
+        ("health", "disease", "virus", "outbreak", "vaccine", "cancer",
+         "diabetes", "heart", "obesity", "mental health", "depression",
+         "anxiety", "sleep", "diet", "nutrition", "fitness", "exercise",
+         "who", "hospital", "doctor", "patient", "drug", "medicine", "study",
+         "researchers", "clinical", "wellness", "immunity", "gut"),
+    ),
+    "Current Affairs & Policy": (
+        1.0,
+        ("policy", "bill", "law", "act", "parliament", "cabinet", "ministry",
+         "minister", "government", "supreme court", "high court", "verdict",
+         "ruling", "election", "poll", "scheme", "subsidy", "budget", "tax",
+         "gst", "regulation", "regulator", "reform", "notification",
+         "guidelines", "amendment", "ordinance", "pib", "commission"),
+    ),
+    "Business & Finance News": (
+        1.0,
+        ("market", "sensex", "nifty", "stock", "shares", "ipo", "funding",
+         "startup", "acquisition", "merger", "revenue", "profit", "loss",
+         "earnings", "quarter", "inflation", "gdp", "rbi", "bank", "loan",
+         "crypto", "bitcoin", "gold", "oil", "trade", "tariff", "economy",
+         "investors", "valuation", "layoff", "hiring", "salary", "billion",
+         "crore", "lakh crore"),
+    ),
+    "Sports News": (
+        1.0,
+        ("cricket", "test match", "odi", "t20", "ipl", "world cup", "football",
+         "soccer", "fifa", "premier league", "olympics", "medal", "tennis",
+         "grand slam", "wimbledon", "hockey", "badminton", "kabaddi",
+         "athletics", "chess", "formula 1", "wrestling", "boxing", "coach",
+         "captain", "innings", "goal", "tournament", "final", "semifinal"),
+    ),
+}
+
+#: Emotional / structural triggers that move an audience to act.
+SHARE_TRIGGERS = (
+    "wins", "won", "record", "first", "historic", "breakthrough", "rescued",
+    "saved", "hero", "proud", "celebrat", "beats", "defeats", "champion",
+    "tribute", "milestone", "gold medal", "world's", "india's first",
+)
+SAVE_TRIGGERS = (
+    "how to", "guide", "explained", "rules", "deadline", "last date", "apply",
+    "eligibility", "checklist", "steps", "tips", "study", "research", "report",
+    "scheme", "benefits", "list of", "what you need", "documents", "process",
+    "new rule", "from april", "from january", "effective",
+)
+DEBATE_TRIGGERS = (
+    "row", "controversy", "slams", "criticis", "backlash", "protest", "outrage",
+    "banned", "ban", "accused", "alleged", "denies", "dispute", "clash",
+    "verdict", "resigns", "sacked", "opposition", "attacks", "hits back",
+    "questions", "debate", "boycott", "apolog", "fine", "penalty", "arrest",
+)
+CURIOSITY_TRIGGERS = (
+    "why", "how", "what", "reason", "secret", "hidden", "revealed", "truth",
+    "nobody", "no one", "actually", "really", "turns out", "surprising",
+)
+
+_NUMBER_RE = re.compile(r"\b\d[\d,.]*\s*(?:%|per cent|percent|crore|lakh|billion|million|bn|mn|kg|km)?\b")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScoredItem:
+    """A news item enriched with everything the .docx and Telegram need."""
+
+    item: NewsItem
+    category: str
+    score: int
+    drivers: list[str]
+    hook: str
+    core_facts: str
+    cta: str
+    rationale: str = ""
+    #: Raw sub-scores, kept for debugging and for the audit trail.
+    components: dict[str, float] = field(default_factory=dict)
+
+    # Convenience passthroughs used by the generators.
+    @property
+    def link(self) -> str:
+        return self.item.link
+
+    @property
+    def publisher(self) -> str:
+        return self.item.publisher
+
+    @property
+    def published_ist(self) -> datetime:
+        return self.item.published.astimezone(config.IST)
+
+    @property
+    def drivers_text(self) -> str:
+        return " | ".join(self.drivers)
+
+    def as_dict(self) -> dict:
+        return {
+            "category": self.category,
+            "score": self.score,
+            "drivers": self.drivers,
+            "hook": self.hook,
+            "core_facts": self.core_facts,
+            "cta": self.cta,
+            "publisher": self.publisher,
+            "link": self.link,
+            "published_ist": self.published_ist.isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Historical performance weighting
+# ---------------------------------------------------------------------------
+
+def load_category_performance() -> dict[str, float]:
+    """Read the rolling Instagram benchmark file written by the auditor.
+
+    Returns a multiplier per category centred on 1.0. Categories that have
+    historically over-performed on this account get promoted into the
+    High-Virality Picks bucket; under-performers get damped. A missing or
+    unreadable file simply yields an empty dict (all multipliers = 1.0).
+    """
+    path = config.BENCHMARK_FILE
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("Could not read benchmarks (%s): %s", path, exc)
+        return {}
+
+    by_category = payload.get("category_performance", {})
+    if not isinstance(by_category, dict) or not by_category:
+        return {}
+
+    values = [v for v in by_category.values() if isinstance(v, (int, float)) and v > 0]
+    if not values:
+        return {}
+    mean = sum(values) / len(values)
+    if mean <= 0:
+        return {}
+
+    multipliers = {}
+    for category, value in by_category.items():
+        if not isinstance(value, (int, float)) or value <= 0:
+            continue
+        # Clamp to +/-20% so one freak reel cannot dominate the editorial mix.
+        multipliers[category] = max(0.80, min(1.20, value / mean))
+    log.info("Historical category multipliers: %s", multipliers)
+    return multipliers
+
+
+# ---------------------------------------------------------------------------
+# Classification
+# ---------------------------------------------------------------------------
+
+def _haystack(item: NewsItem) -> str:
+    return f"{item.title} {item.summary}".lower()
+
+
+def classify(item: NewsItem) -> str:
+    """Route an article to one of the seven assignable categories."""
+    text = _haystack(item)
+    scores: dict[str, float] = {}
+    for category, (weight, keywords) in CATEGORY_LEXICON.items():
+        hits = sum(1 for kw in keywords if kw in text)
+        if hits:
+            scores[category] = hits * weight
+
+    # The feed's own topic is a strong prior, but never an override.
+    if item.category_hint and item.category_hint in CATEGORY_LEXICON:
+        scores[item.category_hint] = scores.get(item.category_hint, 0.0) + 1.6
+
+    if not scores:
+        return "World News"
+
+    # India-specific stories outrank the generic World bucket on a tie.
+    best = max(scores.items(), key=lambda kv: (kv[1], kv[0] == "India News"))
+    return best[0]
+
+
+def detect_drivers(item: NewsItem) -> list[str]:
+    """Map trigger language onto the three engagement drivers."""
+    text = _haystack(item)
+    counts = {
+        DRIVER_SHARE: sum(1 for kw in SHARE_TRIGGERS if kw in text),
+        DRIVER_SAVE: sum(1 for kw in SAVE_TRIGGERS if kw in text),
+        DRIVER_DEBATE: sum(1 for kw in DEBATE_TRIGGERS if kw in text),
+    }
+    ranked = [d for d, n in sorted(counts.items(), key=lambda kv: -kv[1]) if n > 0]
+    if not ranked:
+        # Every story still has a default behaviour: informational news is
+        # saved, human-interest news is shared.
+        ranked = [DRIVER_SAVE if _NUMBER_RE.search(text) else DRIVER_SHARE]
+    return ranked[:2]
+
+
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+def score_item(
+    item: NewsItem,
+    category: str,
+    drivers: list[str],
+    performance: dict[str, float],
+) -> tuple[int, dict[str, float], str]:
+    """Return a 1-100 virality score, its components, and a short rationale.
+
+    Components (max contribution):
+
+    * recency        30  - decays over 48h; breaking news wins
+    * corroboration  18  - how many independent feeds carried it
+    * authority      12  - wire service / government primary source
+    * trigger load   22  - share + save + debate language density
+    * curiosity gap  10  - question and reveal framing
+    * specificity     8  - concrete numbers in the headline
+    """
+    text = _haystack(item)
+    parts: dict[str, float] = {}
+
+    age_h = max(0.0, item.age_minutes / 60.0)
+    parts["recency"] = round(30.0 * max(0.0, 1.0 - (age_h / 48.0)) ** 1.35, 2)
+
+    parts["corroboration"] = round(min(18.0, 6.0 * (item.corroboration ** 0.7)), 2)
+    parts["authority"] = round(12.0 * item.authority, 2)
+
+    trigger_hits = (
+        sum(1 for kw in SHARE_TRIGGERS if kw in text)
+        + sum(1 for kw in SAVE_TRIGGERS if kw in text)
+        + sum(1 for kw in DEBATE_TRIGGERS if kw in text)
+    )
+    parts["triggers"] = round(min(22.0, 5.5 * (trigger_hits ** 0.75)), 2)
+
+    curiosity_hits = sum(1 for kw in CURIOSITY_TRIGGERS if kw in item.title.lower())
+    parts["curiosity"] = round(min(10.0, 4.0 * curiosity_hits), 2)
+
+    numbers = len(_NUMBER_RE.findall(item.title))
+    parts["specificity"] = round(min(8.0, 4.0 * numbers), 2)
+
+    base = sum(parts.values())
+
+    multiplier = performance.get(category, 1.0)
+    parts["historical_multiplier"] = round(multiplier, 3)
+
+    # A debate driver reliably lifts comment volume; a save driver lifts reach
+    # over a longer tail. Both are worth a small structural bonus.
+    driver_bonus = 0.0
+    if DRIVER_DEBATE in drivers:
+        driver_bonus += 4.0
+    if DRIVER_SAVE in drivers:
+        driver_bonus += 2.5
+    if DRIVER_SHARE in drivers:
+        driver_bonus += 3.0
+    parts["driver_bonus"] = driver_bonus
+
+    total = (base + driver_bonus) * multiplier
+    score = int(max(1, min(100, round(total))))
+
+    top = sorted(
+        ((k, v) for k, v in parts.items()
+         if k not in {"historical_multiplier", "driver_bonus"}),
+        key=lambda kv: -kv[1],
+    )[:2]
+    rationale = ", ".join(f"{k} {v:.0f}" for k, v in top)
+    if multiplier != 1.0:
+        rationale += f", history x{multiplier:.2f}"
+
+    return score, parts, rationale
+
+
+# ---------------------------------------------------------------------------
+# Hook, facts and CTA engineering
+# ---------------------------------------------------------------------------
+
+_HOOK_TEMPLATES: dict[str, tuple[str, ...]] = {
+    DRIVER_DEBATE: (
+        "{head} — and the internet is split.",
+        "Nobody agrees on this: {head}.",
+        "{head}. Fair call, or too far?",
+    ),
+    DRIVER_SAVE: (
+        "Save this before you need it: {head}.",
+        "{head} — here is what actually changes for you.",
+        "Bookmark this: {head}.",
+    ),
+    DRIVER_SHARE: (
+        "This one deserves a share: {head}.",
+        "{head}. Yes, this really happened.",
+        "Everyone should see this: {head}.",
+    ),
+}
+
+_CURIOSITY_TEMPLATES: tuple[str, ...] = (
+    "Almost no one is talking about this: {head}.",
+    "Wait — {head_lower}?",
+    "You probably missed this: {head}.",
+)
+
+#: Each CTA carries a ``requires`` guard. A template is only eligible when the
+#: story actually supports it — promising a deadline on a story with no
+#: deadline is the fastest way to lose an audience's trust.
+_CTA_LIBRARY: dict[str, tuple[tuple[str, str | None], ...]] = {
+    DRIVER_DEBATE: (
+        ("Comment your opinion on {topic} — agree or disagree?", None),
+        ("Drop a 1 if you back this, 2 if you don't. Comment why.", None),
+        ("Tell us in the comments: is {topic} the right call?", "decision"),
+    ),
+    DRIVER_SAVE: (
+        ("Save this for later — you will need these {topic} details.", None),
+        ("Save + share with someone this {topic} update affects.", None),
+        ("Save this post before the {topic} deadline passes.", "deadline"),
+        ("Save this — the {topic} numbers are worth coming back to.", "numbers"),
+    ),
+    DRIVER_SHARE: (
+        ("Share this with the one person who needs to see it.", None),
+        ("Send this to your group — they have not heard it yet.", None),
+        ("Share if this made you proud. Follow for more on {topic}.", "pride"),
+    ),
+}
+
+#: Evidence each guarded CTA needs to find in the story before it may be used.
+_CTA_EVIDENCE: dict[str, tuple[str, ...]] = {
+    # Deliberately narrow: only unambiguous deadline language qualifies.
+    # Loose markers such as a bare "before" or "until" match almost any
+    # headline and produced CTAs promising deadlines that did not exist.
+    "deadline": ("deadline", "last date", "last day", "expires", "expiry",
+                 "closes on", "closing date", "cut-off date", "cutoff date",
+                 "valid till", "valid until", "apply by", "apply before",
+                 "final date", "extended till", "extended to",
+                 "comes into effect", "effective from", "with effect from"),
+    "decision": ("ruling", "verdict", "decision", "ban", "banned", "approved",
+                 "rejected", "order", "policy", "rule", "sacked", "resigns",
+                 "hike", "cut", "called off"),
+    "numbers": ("%", "per cent", "percent", "crore", "lakh", "billion",
+                "million", "rate", "growth", "forecast", "survey", "study"),
+    "pride": ("wins", "won", "record", "first", "historic", "gold", "medal",
+              "champion", "rescued", "saved", "honoured", "awarded", "proud"),
+}
+
+
+def _shorten(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:-") + "..."
+
+
+#: Words that are capitalised only because they open a headline, plus the
+#: interrogatives and auxiliaries that make a CTA read like broken English
+#: ("Comment your opinion on Body How Gurgaon").
+_PHRASE_STOPWORDS = frozenset(
+    """the a an of in on for to and or but after before with as at by from
+    why how what when where who which is are was were be been being has have
+    had will would can could should may might must do does did says said
+    new big top this that these those it its his her their our your my
+    body man woman people over under into out up down off
+    first last next now today yesterday tomorrow amid ahead against""".split()
+)
+
+
+def _topic_phrase(item: NewsItem, category: str) -> str:
+    """A short noun phrase for use inside a CTA sentence.
+
+    Prefers the longest run of consecutive capitalised words (a real proper
+    noun such as "Asian Games" or "Supreme Court") over a scatter of
+    unrelated capitals, and falls back to the category name rather than
+    emitting something ungrammatical.
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z'&.-]*", item.title)
+
+    best_run: list[str] = []
+    current: list[str] = []
+    for index, word in enumerate(words):
+        significant = word[0].isupper() and word.lower() not in _PHRASE_STOPWORDS
+        # A capitalised first word is not evidence of a proper noun.
+        if index == 0 and word.lower() in _PHRASE_STOPWORDS:
+            significant = False
+        if significant:
+            current.append(word)
+            if len(current) > len(best_run):
+                best_run = current.copy()
+        else:
+            current = []
+
+    phrase = " ".join(best_run[:3]).strip(" .-")
+    # A trailing possessive reads as a dangling fragment inside a CTA
+    # ("Follow for more on Abhishek Sharma's"), so drop it.
+    for suffix in ("'s", "’s", "'", "’"):
+        if phrase.endswith(suffix):
+            phrase = phrase[: -len(suffix)].rstrip()
+            break
+    if len(phrase) < 3:
+        return category.replace(" News", "").replace(" & ", " and ")
+    return phrase
+
+
+def build_hook(item: NewsItem, drivers: list[str], category: str) -> str:
+    """Craft a reel hook that reframes the headline without adding facts."""
+    head = _shorten(item.title.rstrip(" .!?"), 110)
+    primary = drivers[0] if drivers else DRIVER_SHARE
+
+    if category == "Uncovered & Shocking News":
+        templates = _CURIOSITY_TEMPLATES
+    else:
+        templates = _HOOK_TEMPLATES[primary]
+
+    # Deterministic template pick keyed off the headline, so the same story
+    # always produces the same hook across reruns.
+    index = sum(ord(c) for c in item.title) % len(templates)
+    hook = templates[index].format(head=head, head_lower=head[0].lower() + head[1:])
+    return _shorten(hook, 140)
+
+
+def build_core_facts(item: NewsItem) -> str:
+    """Two journalistically accurate sentences, sourced from the feed only."""
+    headline = item.title.rstrip(" .")
+    first = f"{headline}."
+
+    summary = item.summary.strip()
+    second = ""
+    if summary:
+        sentences = [s.strip() for s in _SENTENCE_RE.split(summary) if s.strip()]
+        for sentence in sentences:
+            # Skip boilerplate and near-repeats of the headline.
+            if len(sentence) < 30:
+                continue
+            if sentence.lower()[:40] == headline.lower()[:40]:
+                continue
+            second = sentence if sentence.endswith((".", "!", "?")) else sentence + "."
+            break
+
+    if not second:
+        when = item.published.astimezone(config.IST).strftime("%d %b %Y, %I:%M %p IST")
+        second = f"Reported by {item.publisher} on {when}; carried by {item.corroboration} of our monitored feeds."
+
+    return f"{_shorten(first, 220)} {_shorten(second, 260)}".strip()
+
+
+def build_cta(item: NewsItem, drivers: list[str], category: str) -> str:
+    """Pick a CTA the story can actually pay off, then fill in its topic."""
+    primary = drivers[0] if drivers else DRIVER_SHARE
+    text = _haystack(item)
+
+    eligible = [
+        template for template, requirement in _CTA_LIBRARY[primary]
+        if requirement is None
+        or any(marker in text for marker in _CTA_EVIDENCE[requirement])
+    ]
+    if not eligible:  # every guarded option was filtered out
+        eligible = [t for t, r in _CTA_LIBRARY[primary] if r is None]
+
+    index = sum(ord(c) for c in item.link) % len(eligible)
+    return eligible[index].format(topic=_topic_phrase(item, category))
+
+
+# ---------------------------------------------------------------------------
+# Briefing assembly
+# ---------------------------------------------------------------------------
+
+def analyse(item: NewsItem, performance: dict[str, float]) -> ScoredItem:
+    category = classify(item)
+    drivers = detect_drivers(item)
+    score, components, rationale = score_item(item, category, drivers, performance)
+    return ScoredItem(
+        item=item,
+        category=category,
+        score=score,
+        drivers=drivers,
+        hook=build_hook(item, drivers, category),
+        core_facts=build_core_facts(item),
+        cta=build_cta(item, drivers, category),
+        rationale=rationale,
+        components=components,
+    )
+
+
+def build_briefing(
+    items: list[NewsItem],
+    min_per_category: int | None = None,
+    performance: dict[str, float] | None = None,
+    max_per_category: int | None = None,
+) -> dict[str, list[ScoredItem]]:
+    """Score everything and lay it out across the eight categories.
+
+    Guarantees ``min_per_category`` entries per category whenever the raw
+    supply allows it. Categories that are naturally thin (e.g. Sports on a
+    quiet Tuesday) are topped up from the highest-scoring unused stories,
+    which are then relabelled to the category they are filling — the source
+    link and facts stay untouched, only the section placement changes.
+    """
+    minimum = min_per_category or config.MIN_ITEMS_PER_CATEGORY
+    maximum = max(minimum, max_per_category or config.MAX_ITEMS_PER_CATEGORY)
+    perf = load_category_performance() if performance is None else performance
+
+    scored = [analyse(item, perf) for item in items]
+    scored.sort(key=lambda s: (-s.score, s.item.published), reverse=False)
+    scored.sort(key=lambda s: -s.score)
+
+    buckets: dict[str, list[ScoredItem]] = {c: [] for c in config.CATEGORIES}
+    for entry in scored:
+        buckets[entry.category].append(entry)
+
+    # 1. High-Virality Instagram Picks: the best of everything, one story per
+    #    category at most until we have the minimum, so the picks reel slate
+    #    is not seven variations of the same story.
+    picks: list[ScoredItem] = []
+    used_links: set[str] = set()
+    for pass_no in range(4):
+        for category in config.ASSIGNABLE_CATEGORIES:
+            for entry in buckets[category]:
+                if entry.link in used_links:
+                    continue
+                picks.append(entry)
+                used_links.add(entry.link)
+                break
+            if len(picks) >= minimum and pass_no >= 1:
+                break
+        if len(picks) >= minimum:
+            break
+    picks.sort(key=lambda s: -s.score)
+    picks = picks[:maximum]
+    buckets["High-Virality Instagram Picks"] = picks
+
+    # 2. Trim every category to the ceiling, keeping the strongest stories,
+    #    then top up anything still short from the unused remainder.
+    assigned_links = {e.link for e in picks}
+    spare = [e for e in scored if e.link not in assigned_links]
+    spare_index = 0
+    for category in config.ASSIGNABLE_CATEGORIES:
+        buckets[category].sort(key=lambda s: -s.score)
+        buckets[category] = buckets[category][:maximum]
+        bucket = buckets[category]
+        bucket_links = {e.link for e in bucket}
+        while len(bucket) < minimum and spare_index < len(spare):
+            candidate = spare[spare_index]
+            spare_index += 1
+            if candidate.link in bucket_links or candidate.category == category:
+                continue
+            filler = ScoredItem(
+                item=candidate.item,
+                category=category,
+                score=candidate.score,
+                drivers=candidate.drivers,
+                hook=candidate.hook,
+                core_facts=candidate.core_facts,
+                cta=candidate.cta,
+                rationale=candidate.rationale + " (cross-filed)",
+                components=candidate.components,
+            )
+            bucket.append(filler)
+            bucket_links.add(candidate.link)
+        bucket.sort(key=lambda s: -s.score)
+
+    for category, bucket in buckets.items():
+        if len(bucket) < minimum:
+            log.warning(
+                "Category %r has only %d/%d items - the feed window was thin.",
+                category, len(bucket), minimum,
+            )
+    return buckets
+
+
+def flatten(briefing: dict[str, list[ScoredItem]]) -> list[ScoredItem]:
+    return [entry for bucket in briefing.values() for entry in bucket]
+
+
+def top_picks(briefing: dict[str, list[ScoredItem]], limit: int = 5) -> list[ScoredItem]:
+    picks = briefing.get("High-Virality Instagram Picks", [])
+    return picks[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Optional Claude refinement
+# ---------------------------------------------------------------------------
+
+_REFINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "hook": {"type": "string"},
+                    "cta": {"type": "string"},
+                },
+                "required": ["index", "hook", "cta"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["items"],
+    "additionalProperties": False,
+}
+
+_REFINE_SYSTEM = (
+    "You are an award-winning short-form news editor for an Indian Instagram "
+    "news page. You rewrite reel hooks and CTAs for maximum retention.\n"
+    "Hard rules:\n"
+    "1. Never introduce a fact that is not in the supplied headline or facts.\n"
+    "2. Never sensationalise beyond what the source supports; no clickbait "
+    "that the story cannot pay off.\n"
+    "3. Hook: max 120 characters, spoken-word rhythm, front-load the tension.\n"
+    "4. CTA: one sentence, name the specific action (save / share / comment) "
+    "and give a concrete reason tied to this story.\n"
+    "5. Plain English with Indian-audience familiarity. No hashtags, no emoji."
+)
+
+
+def refine_with_claude(entries: list[ScoredItem], model: str | None = None) -> bool:
+    """Polish hooks and CTAs in place. Returns True if refinement happened.
+
+    Entirely optional: with no API key, no ``anthropic`` package, or any API
+    error, the deterministic hooks are kept and the run continues.
+    """
+    api_key = config.anthropic_api_key()
+    if not api_key:
+        log.info("ANTHROPIC_API_KEY not set - using deterministic hooks/CTAs.")
+        return False
+    if not entries:
+        return False
+
+    try:
+        import anthropic
+    except ImportError:
+        log.warning("anthropic package not installed - skipping refinement.")
+        return False
+
+    payload = [
+        {
+            "index": i,
+            "category": e.category,
+            "headline": e.item.title,
+            "facts": e.core_facts,
+            "primary_driver": e.drivers[0] if e.drivers else DRIVER_SHARE,
+            "current_hook": e.hook,
+            "current_cta": e.cta,
+        }
+        for i, e in enumerate(entries)
+    ]
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=model or config.CLAUDE_MODEL,
+            max_tokens=16000,
+            system=_REFINE_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Rewrite the hook and CTA for each item below. Return "
+                        "one object per item, preserving the index.\n\n"
+                        + json.dumps(payload, ensure_ascii=False, indent=1)
+                    ),
+                }
+            ],
+            output_config={"format": {"type": "json_schema", "schema": _REFINE_SCHEMA}},
+        )
+    except Exception as exc:  # network, auth, rate limit - all non-fatal here
+        log.warning("Claude refinement unavailable (%s) - keeping engine output.", exc)
+        return False
+
+    try:
+        text = next(b.text for b in response.content if b.type == "text")
+        data = json.loads(text)
+    except (StopIteration, json.JSONDecodeError, AttributeError) as exc:
+        log.warning("Could not parse Claude refinement response: %s", exc)
+        return False
+
+    applied = 0
+    for row in data.get("items", []):
+        idx = row.get("index")
+        if not isinstance(idx, int) or not 0 <= idx < len(entries):
+            continue
+        hook, cta = row.get("hook"), row.get("cta")
+        if isinstance(hook, str) and hook.strip():
+            entries[idx].hook = _shorten(hook.strip(), 140)
+        if isinstance(cta, str) and cta.strip():
+            entries[idx].cta = _shorten(cta.strip(), 160)
+        applied += 1
+
+    log.info("Claude refined %d/%d hooks and CTAs.", applied, len(entries))
+    return applied > 0
+
+
+def window_label(start: datetime, end: datetime) -> str:
+    """Human-readable IST window label used in documents and messages."""
+    start_ist = start.astimezone(config.IST)
+    end_ist = end.astimezone(config.IST)
+    if start_ist.date() == end_ist.date():
+        return (
+            f"{start_ist.strftime('%d %b %Y, %I:%M %p')} to "
+            f"{end_ist.strftime('%I:%M %p')} IST"
+        )
+    return (
+        f"{start_ist.strftime('%d %b %Y, %I:%M %p')} to "
+        f"{end_ist.strftime('%d %b %Y, %I:%M %p')} IST"
+    )
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
