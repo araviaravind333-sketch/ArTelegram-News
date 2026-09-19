@@ -176,11 +176,20 @@ class TelegramNotifier:
     # -- inbound -----------------------------------------------------------
 
     def get_updates(self, offset: int | None = None, timeout: int | None = None):
-        """Long-poll for new messages."""
+        """Long-poll for new messages.
+
+        Includes edited_message/edited_channel_post: Telegram delivers an
+        edited message as this separate update type, not "message" again, so
+        a user who fixes a typo by editing (rather than sending a fresh
+        message) would otherwise have the command silently dropped - it
+        would never appear in any getUpdates response at all.
+        """
         poll_timeout = timeout if timeout is not None else config.LISTENER_POLL_TIMEOUT
         payload: dict[str, Any] = {
             "timeout": poll_timeout,
-            "allowed_updates": '["message","channel_post"]',
+            "allowed_updates": (
+                '["message","channel_post","edited_message","edited_channel_post"]'
+            ),
         }
         if offset is not None:
             payload["offset"] = offset
@@ -210,7 +219,13 @@ class TelegramNotifier:
 
             for update in updates:
                 next_offset = update["update_id"] + 1
-                message = update.get("message") or update.get("channel_post") or {}
+                message = (
+                    update.get("message")
+                    or update.get("channel_post")
+                    or update.get("edited_message")
+                    or update.get("edited_channel_post")
+                    or {}
+                )
                 text = (message.get("text") or "").strip()
                 chat = str((message.get("chat") or {}).get("id", ""))
                 if text and chat:
