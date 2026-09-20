@@ -1,5 +1,20 @@
 {
   "reels": {
+    "17988777540024249": {
+      "media_id": "17988777540024249",
+      "permalink": "https://www.instagram.com/reel/DdeFwk5ArSy/",
+      "posted_at": "2026-09-19T13:13:00+00:00",
+      "hook_type": "Plain statement hook",
+      "topic": "India News",
+      "views": 3.0,
+      "reach": 3.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 1.0,
+      "avg_watch_seconds": 1.8
+    },
     "18126523798781343": {
       "media_id": "18126523798781343",
       "permalink": "https://www.instagram.com/reel/DdYkH8DEmsi/",
@@ -17,16 +32,16 @@
     }
   },
   "benchmarks": {
-    "views": 103.0,
+    "views": 53.0,
     "share_rate": 0.0,
     "save_rate": 0.0,
     "comment_rate": 0.0,
     "engagement_rate": 0.0,
-    "view_through": 1.87,
-    "sample_size": 1
+    "view_through": 1.44,
+    "sample_size": 2
   },
   "category_performance": {
-    "India News": 103.0
+    "India News": 53.0
   },
-  "updated_at": "2026-09-19T04:40:33.819248+00:00"
+  "updated_at": "2026-09-20T04:41:16.582145+00:00"
 }
