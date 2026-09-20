@@ -384,8 +384,7 @@ def run_audit(
 
     plan, result = instagram_auditor.run_audit(news_picks=picks)
     log.info(
-        "Audit complete: %d reels, %d winners, %d flops",
-        len(result.reels), len(result.winners), len(result.flops),
+        "Audit complete: %d posts read (%d reels)", len(result.posts), len(result.reels)
     )
 
     if dry_run:

@@ -192,7 +192,10 @@ MAX_ITEMS_PER_CATEGORY = get_int("MAX_ITEMS_PER_CATEGORY", 10)
 #: The "High-Virality Instagram Picks" summary section must clear this many
 #: stories on its own, drawn from across all 8 categories.
 MIN_PICKS = get_int("MIN_PICKS", 10)
-REELS_AUDIT_COUNT = get_int("REELS_AUDIT_COUNT", 10)
+#: How many of the account's latest posts (every format) the daily report
+#: reads. The audit used to look at reels only, which on an account that posts
+#: mostly images meant ignoring almost everything it published.
+AUDIT_POST_COUNT = get_int("AUDIT_POST_COUNT", 50)
 
 FEED_TIMEOUT_SECONDS = get_int("FEED_TIMEOUT_SECONDS", 20)
 FEED_MAX_WORKERS = get_int("FEED_MAX_WORKERS", 12)

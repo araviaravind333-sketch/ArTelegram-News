@@ -1,6 +1,6 @@
 # Aravind News 24 — Automation
 
-Daily news scraping, virality analysis and Instagram Reels auditing. Runs
+Daily news scraping, virality analysis and Instagram insights reporting. Runs
 entirely on free tiers: GitHub Actions for compute, free RSS for news, the
 Telegram Bot API for delivery, and the Instagram Graph API for insights. No
 paid news API is used anywhere.
@@ -28,18 +28,23 @@ total, **at least 7 stories per section**. Every table has exactly 4 columns:
 
 The 4th column is the one that reads *this* account's history: it pulls the
 per-category performance multiplier from `data/benchmarks.json` (written by
-the daily reels audit) and says outright whether that category has helped or
+the daily Instagram report) and says outright whether that category has helped or
 hurt you before, or — with fewer than 5 reels tracked so far — falls back
 honestly to "no reel history yet" plus the story's own virality score, rather
 than pretending to know something it doesn't. Supports the same custom time
 windows as `/scan` (last 24h, a specific range, etc.).
 
-**Workflow 2 — Reels audit (daily, 10:00 AM IST)**
-Pulls the last 5-10 reels from the Instagram Graph API, compares them against
-a rolling historical benchmark, and pushes an executive action plan to
-Telegram: what worked and why, what to avoid, and three reel concepts
-engineered for a million views — each one built on a hook format this account
-measurably wins with, applied to a story breaking this morning.
+**Workflow 2 — Daily Instagram report (10:00 AM IST)**
+Reads the account's latest 50 posts of **every format** (reels, images,
+carousels) from the Instagram Graph API and sends a plain-language report to
+Telegram: your account size, the top posts by views, average views per format,
+what got no reaction, and three reels to post today built from the morning's
+top stories. Every figure is a raw Instagram Insights value (views, accounts
+reached, likes, comments, shares, saves), so it can be checked against the
+Insights screen in the app. Small samples are labelled as small: with a
+handful of reels the report says "a hint, not proof" rather than declaring
+winners and flops, and it never prints a rate (like "per 1,000 views") when
+the counts are too small to mean anything.
 
 The two workflows feed each other: the audit writes `data/benchmarks.json`,
 and the virality engine reads it back as a per-category multiplier, so topics
@@ -95,7 +100,7 @@ python main.py scan --minutes 25                # .docx for a custom window
 python main.py scan --hours 6
 python main.py scan --window "17-09-26 06:00 to now"
 python main.py scan --dry-run                   # build the .docx, send nothing
-python main.py audit                            # reels audit + action plan
+python main.py audit                            # daily Instagram report
 python main.py audit --dry-run                  # print the plan instead
 python main.py listen                           # poll Telegram for commands
 python main.py check                            # validate configuration
@@ -111,7 +116,7 @@ python main.py check                            # validate configuration
 | `/scan last 6 hours` | relative window |
 | `/scan 17-09-26 06:00 to now` | explicit window |
 | `/scan 17-09-26 06:00 to 18-09-26 09:30` | explicit range |
-| `/audit` | run the reels audit now |
+| `/audit` | run the daily Instagram report now |
 | `/ping`, `/help` | liveness and command reference |
 
 Dates are **day-first** (`17-09-26` = 17 September 2026) and all times are
@@ -124,7 +129,7 @@ IST. `DD/MM/YY`, `YYYY-MM-DD`, `HH:MM` and `6:00 AM` are also accepted.
 | File | Schedule (UTC cron) | Purpose |
 |---|---|---|
 | `.github/workflows/news_pulse.yml` | `5 * * * *` | **the hourly news feed** |
-| `.github/workflows/daily_audit.yml` | `30 4 * * *` → 10:00 AM IST | reels audit, delivered well before 10:30 |
+| `.github/workflows/daily_audit.yml` | `30 4 * * *` → 10:00 AM IST | daily Instagram report, delivered well before 10:30 |
 | `.github/workflows/news_scan.yml` | `30 1 * * *` → 07:00 AM IST | full `.docx` briefing |
 | `.github/workflows/telegram_listener.yml` | `*/5 * * * *` | on-demand `/pulse`, `/scan`, `/audit` |
 
@@ -186,7 +191,7 @@ scrapers/seen_store.py         cross-run memory so the pulse never repeats a sto
 analyzer/virality_engine.py    classification, 1-100 scoring, hooks, CTAs, Instagram-fit
 generators/doc_generator.py    styled landscape .docx with per-category tables
 generators/pulse_formatter.py  compact Telegram digest for the hourly pulse
-services/instagram_auditor.py  Graph API insights, benchmarks, 1M-view roadmap
+services/instagram_auditor.py  Graph API insights, plain-language report, reel plan
 services/telegram_notifier.py  sendMessage / sendDocument / getUpdates
 main.py                        window parsing, command dispatch, CLI
 data/benchmarks.json           rolling reel history (committed by CI each day)

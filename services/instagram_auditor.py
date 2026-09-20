@@ -1,16 +1,23 @@
-"""Instagram Reels insights audit and the 1M-view action plan.
+"""Instagram insights audit and the daily plain-language report.
 
-Pulls the most recent reels from the Meta Graph API, derives the ratios that
-actually predict reach (share rate, save rate, comment rate, watch-through),
-compares each reel against a rolling on-disk benchmark, and writes an
-executive action plan for Telegram.
+Pulls the account's latest posts of every format (reels, images, carousels)
+from the Meta Graph API, reads each post's real Insights numbers, and
+writes a report for Telegram that a non-analyst can act on: what got
+views, what got no reaction, and three reels to post today.
 
-Requires a Business or Creator account linked to a Facebook Page, and a token
-with ``instagram_basic`` + ``instagram_manage_insights``.
+Every number in the report is a raw Instagram Insights value (views,
+accounts reached, likes, comments, shares, saves), so it can be checked
+against the Insights screen in the Instagram app. Nothing is invented,
+and small samples are called out as small rather than dressed up as
+trends.
+
+Requires a Business or Creator account linked to a Facebook Page, and a
+token with ``instagram_basic`` + ``instagram_manage_insights``.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -43,6 +50,13 @@ REEL_METRICS = (
     "ig_reels_video_view_total_time",
 )
 
+#: Images and carousels have no watch-time metrics; asking for them would
+#: only trigger a rejected request and a retry.
+POST_METRICS = (
+    "views", "reach", "total_interactions", "likes", "comments",
+    "shares", "saved",
+)
+
 HOOK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Question hook", re.compile(r"^[^.!?\n]{0,120}\?", re.S)),
     ("Number/list hook", re.compile(r"^\W*\d+[\s\w]{0,40}(?:things|ways|facts|reasons|signs|rules)", re.I)),
@@ -64,13 +78,17 @@ class InstagramError(RuntimeError):
 
 @dataclass
 class ReelMetrics:
-    """One reel with its raw insight values and the derived ratios."""
+    """One Instagram post (reel, image, carousel...) with its raw insight
+    values and derived ratios. The name is historical: the daily reel
+    history persisted for the news report still only tracks ``kind ==
+    "Reel"`` entries, but the audit itself reads every format."""
 
     media_id: str
     permalink: str
     caption: str
     posted_at: datetime
     raw: dict[str, float] = field(default_factory=dict)
+    kind: str = "Reel"
 
     # -- raw accessors with sane fallbacks ---------------------------------
     @property
@@ -249,19 +267,48 @@ class InstagramAuditor:
 
     # -- media -------------------------------------------------------------
 
-    def fetch_recent_reels(self, limit: int | None = None) -> list[ReelMetrics]:
-        """Return the most recent reels, newest first, with insights attached."""
-        want = limit or config.REELS_AUDIT_COUNT
-        # Over-fetch: the media edge mixes reels with images and carousels.
+    def fetch_profile(self) -> dict[str, Any]:
+        """Follower and post counts for the report header. Never raises."""
+        try:
+            return self._get(
+                self.user_id, {"fields": "username,followers_count,media_count"}
+            )
+        except InstagramError as exc:
+            log.warning("Could not fetch profile details: %s", exc)
+            return {}
+
+    @staticmethod
+    def _kind_of(media: dict[str, Any]) -> str:
+        if media.get("media_product_type") == "REELS":
+            return "Reel"
+        return {
+            "IMAGE": "Image", "CAROUSEL_ALBUM": "Carousel", "VIDEO": "Video",
+        }.get(media.get("media_type", ""), "Post")
+
+    def fetch_recent_posts(
+        self, sample_size: int | None = None
+    ) -> tuple[list[ReelMetrics], list[ReelMetrics]]:
+        """Return ``(sample, reels)``, both newest first.
+
+        ``sample`` is the latest ``sample_size`` posts of *every* format, which
+        is what the report describes. ``reels`` is every reel found in the page
+        of media fetched - it can reach further back than the sample, so the
+        reel history kept for the news report keeps accumulating even though
+        reels are rare on this account.
+        """
+        want = sample_size or config.AUDIT_POST_COUNT
         payload = self._get(
             f"{self.user_id}/media",
-            {"fields": MEDIA_FIELDS, "limit": min(100, max(25, want * 4))},
+            {"fields": MEDIA_FIELDS, "limit": min(100, max(50, want))},
         )
 
+        sample: list[ReelMetrics] = []
         reels: list[ReelMetrics] = []
-        for media in payload.get("data", []):
-            if media.get("media_product_type") != "REELS":
-                continue
+        for index, media in enumerate(payload.get("data", [])):
+            kind = self._kind_of(media)
+            in_sample = index < want
+            if not in_sample and kind != "Reel":
+                continue  # older non-reel posts are not needed at all
             try:
                 posted = datetime.fromisoformat(
                     media["timestamp"].replace("+0000", "+00:00")
@@ -269,7 +316,7 @@ class InstagramAuditor:
             except (KeyError, ValueError):
                 posted = datetime.now(timezone.utc)
 
-            reel = ReelMetrics(
+            post = ReelMetrics(
                 media_id=media["id"],
                 permalink=media.get("permalink", ""),
                 caption=media.get("caption", "") or "",
@@ -278,23 +325,27 @@ class InstagramAuditor:
                     "likes": float(media.get("like_count") or 0),
                     "comments": float(media.get("comments_count") or 0),
                 },
+                kind=kind,
             )
-            reel.raw.update(self.fetch_insights(reel.media_id))
-            reels.append(reel)
-            if len(reels) >= want:
-                break
+            post.raw.update(self.fetch_insights(post.media_id, kind))
+            if in_sample:
+                sample.append(post)
+            if kind == "Reel":
+                reels.append(post)
 
-        if not reels:
+        if not sample:
             raise InstagramError(
-                "No reels found on this account. Confirm INSTA_USER_ID points at "
-                "an Instagram Business/Creator account that has published reels."
+                "No posts found on this account. Confirm INSTA_USER_ID points at "
+                "an Instagram Business/Creator account that has published posts."
             )
-        log.info("Fetched %d reels for audit", len(reels))
-        return reels
+        log.info(
+            "Fetched %d recent posts (%d reels seen) for audit", len(sample), len(reels)
+        )
+        return sample, reels
 
-    def fetch_insights(self, media_id: str) -> dict[str, float]:
+    def fetch_insights(self, media_id: str, kind: str = "Reel") -> dict[str, float]:
         """Fetch insight metrics, retrying without any metric Meta rejects."""
-        metrics = list(REEL_METRICS)
+        metrics = list(REEL_METRICS if kind == "Reel" else POST_METRICS)
         while metrics:
             try:
                 payload = self._get(
@@ -418,347 +469,336 @@ def save_history(reels: list[ReelMetrics], benchmarks: Benchmarks) -> dict[str, 
     return history
 
 
-def historical_benchmarks(history: dict[str, Any]) -> Benchmarks:
-    """Rebuild medians from the full stored history, not just today's pull."""
-    rows = list(history.get("reels", {}).values())
-    if not rows:
-        return Benchmarks()
-
-    def median(key: str) -> float:
-        values = [float(r.get(key) or 0) for r in rows]
-        return round(statistics.median(values), 2) if values else 0.0
-
-    return Benchmarks(
-        views=median("views"),
-        share_rate=median("share_rate"),
-        save_rate=median("save_rate"),
-        comment_rate=median("comment_rate"),
-        engagement_rate=median("engagement_rate"),
-        view_through=median("view_through"),
-        sample_size=len(rows),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
 
-def classify_performance(reel: ReelMetrics, bench: Benchmarks) -> tuple[str, list[str]]:
-    """Return a verdict and the specific reasons behind it."""
-    reasons: list[str] = []
-    score = 0
+#: Phrases that mean a caption is asking the viewer to do something. Bare
+#: words are deliberately not enough: "shares fell", "saved 2,000 acres",
+#: "declined to comment" and "countries agree" are ordinary news wording, not
+#: requests, so each pattern needs the imperative form.
+_CTA_RE = re.compile(
+    r"\bfollow\s+(?:us|for|our|@\w+|\S*news\S*)"
+    r"|\b(?:drop|leave|share|post|write)\s+your\b"
+    r"|\bin the comments\b|\bcomments? below\b|\bcomment\s+(?:below|now|if|your)\b"
+    r"|\btag\s+(?:a|your|someone|two|three|friends?)\b"
+    r"|\bshare\s+(?:this|it|with)\b|\bsave\s+(?:this|it|for later)\b"
+    r"|\b(?:tell us|let us know|what do you think|dm us|subscribe)\b"
+    r"|\byour (?:thoughts|opinion|views?)\b",
+    re.I,
+)
 
-    def compare(label: str, value: float, baseline: float, unit: str = "") -> None:
-        nonlocal score
-        if baseline <= 0:
-            return
-        delta = (value - baseline) / baseline * 100
-        if delta >= 25:
-            score += 1
-            reasons.append(f"{label} {value}{unit} is {delta:+.0f}% vs median")
-        elif delta <= -25:
-            score -= 1
-            reasons.append(f"{label} {value}{unit} is {delta:+.0f}% vs median")
+#: Display order and wording for each post format.
+_KIND_ORDER = ("Reel", "Image", "Carousel", "Video", "Post")
+_KIND_WORD = {
+    "Reel": "reel", "Image": "image", "Carousel": "carousel",
+    "Video": "video", "Post": "post",
+}
 
-    compare("views", reel.views, bench.views)
-    compare("share rate", reel.share_rate, bench.share_rate, "/1k")
-    compare("save rate", reel.save_rate, bench.save_rate, "/1k")
-    compare("comment rate", reel.comment_rate, bench.comment_rate, "/1k")
-    compare("view-through", reel.view_through, bench.view_through, "x")
-
-    if reel.view_through and reel.view_through < 1.0 and bench.view_through >= 1.0:
-        reasons.append("view-through below 1.0x: the first 2 seconds lost people")
-
-    if score >= 2:
-        verdict = "WINNER"
-    elif score <= -2:
-        verdict = "FLOP"
-    else:
-        verdict = "FLAT"
-    return verdict, reasons
+#: Below this many followers the report adds a small-numbers reminder.
+SMALL_ACCOUNT_FOLLOWERS = 100
+#: Below this many posts the report calls itself a first look.
+FIRST_LOOK_POSTS = 5
 
 
 @dataclass
 class AuditResult:
-    reels: list[ReelMetrics]
-    benchmarks: Benchmarks
-    verdicts: dict[str, tuple[str, list[str]]]
-    winners: list[ReelMetrics]
-    flops: list[ReelMetrics]
+    """Everything the report is built from."""
 
-    def by_verdict(self, verdict: str) -> list[ReelMetrics]:
-        return [r for r in self.reels if self.verdicts[r.media_id][0] == verdict]
+    posts: list[ReelMetrics]      # latest posts of every format, newest first
+    reels: list[ReelMetrics]      # every reel seen (can reach further back)
+    profile: dict[str, Any] = field(default_factory=dict)
 
 
-def analyse_reels(reels: list[ReelMetrics], benchmarks: Benchmarks) -> AuditResult:
-    verdicts = {r.media_id: classify_performance(r, benchmarks) for r in reels}
-    ranked = sorted(reels, key=lambda r: -r.engagement_rate)
-    winners = [r for r in ranked if verdicts[r.media_id][0] == "WINNER"] or ranked[:2]
-    flops = [r for r in ranked if verdicts[r.media_id][0] == "FLOP"] or ranked[-2:]
-    return AuditResult(reels, benchmarks, verdicts, winners, flops)
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
-def winning_hook_types(result: AuditResult) -> list[tuple[str, float]]:
-    """Average engagement rate by hook type, best first."""
+def _num(value: float) -> str:
+    """Whole numbers with separators; one decimal for small non-integers."""
+    if value >= 10 or abs(value - round(value)) < 0.05:
+        return f"{value:,.0f}"
+    return f"{value:.1f}"
+
+
+def _amount(value: float, word: str) -> str:
+    """A number with its noun, pluralised: ``1 share``, ``5 shares``."""
+    return f"{_num(value)} {word}{'' if value == 1 else 's'}"
+
+
+def _esc(text: str | None) -> str:
+    return html.escape(text or "", quote=False)
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _count_phrase(kind: str, count: int) -> str:
+    word = _KIND_WORD.get(kind, kind.lower())
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def format_breakdown(posts: list[ReelMetrics]) -> list[tuple[str, int, float]]:
+    """``(format, post count, average views)`` per format, in display order."""
+    rows = []
+    for kind in _KIND_ORDER:
+        group = [p for p in posts if p.kind == kind]
+        if group:
+            rows.append((kind, len(group), _mean([p.views for p in group])))
+    return rows
+
+
+def topic_breakdown(
+    posts: list[ReelMetrics], min_posts: int = 3
+) -> tuple[str, list[tuple[str, float, int]]]:
+    """Average views by topic, using only the most common format.
+
+    Reels and images get very different views, so mixing them would make a
+    topic look strong or weak purely because of the format it happened to be
+    posted in. Topics with fewer than ``min_posts`` posts are left out: one
+    or two posts is not a pattern.
+    """
+    if not posts:
+        return "", []
+    counts: dict[str, int] = {}
+    for post in posts:
+        counts[post.kind] = counts.get(post.kind, 0) + 1
+    main_kind = max(counts, key=lambda k: counts[k])
+
     grouped: dict[str, list[float]] = {}
-    for reel in result.reels:
-        grouped.setdefault(reel.hook_type, []).append(reel.engagement_rate)
-    return sorted(
-        ((hook, round(statistics.mean(values), 2)) for hook, values in grouped.items()),
-        key=lambda kv: -kv[1],
+    for post in posts:
+        if post.kind == main_kind and post.topic != "Uncategorised":
+            grouped.setdefault(post.topic, []).append(post.views)
+    rows = sorted(
+        ((topic, _mean(views), len(views))
+         for topic, views in grouped.items() if len(views) >= min_posts),
+        key=lambda row: -row[1],
     )
+    return main_kind, rows
+
+
+def format_verdict(breakdown: list[tuple[str, int, float]]) -> str:
+    """One plain sentence comparing reels with image posts, or ``""``."""
+    by_kind = {kind: (count, avg) for kind, count, avg in breakdown}
+    if "Reel" not in by_kind or "Image" not in by_kind:
+        return ""
+    reel_count, reel_avg = by_kind["Reel"]
+    _, image_avg = by_kind["Image"]
+    if image_avg <= 0:
+        return ""
+
+    ratio = reel_avg / image_avg
+    if ratio >= 1.5:
+        times = f"{ratio:.1f}" if ratio < 10 else f"{ratio:.0f}"
+        text = f"Reels are getting about {times}× the views of image posts"
+    elif ratio <= 2 / 3:
+        text = "Image posts are getting more views than reels"
+    else:
+        text = "Reels and image posts are getting similar views"
+    if reel_count < 5:
+        text += (
+            f", but that is only {_count_phrase('Reel', reel_count)} so far - "
+            "treat it as a hint, not proof"
+        )
+    return f"→ {text}."
 
 
 # ---------------------------------------------------------------------------
-# Executive action plan
+# The report
 # ---------------------------------------------------------------------------
 
-def _fmt_reel(reel: ReelMetrics, verdict: str, reasons: list[str]) -> str:
-    when = reel.posted_at.astimezone(config.IST).strftime("%d %b")
+def _describe_post(post: ReelMetrics) -> str:
+    """Two lines: which post it is, then its real Insights numbers."""
+    when = post.posted_at.astimezone(config.IST).strftime("%d %b")
+    title = _esc(_clip(post.first_line or post.caption or "(no caption)", 60))
     line = (
-        f"<b>{when} — {reel.hook_type}</b> ({reel.topic})\n"
-        f"   {int(reel.views):,} views • {reel.view_through}x view-through • "
-        f"{reel.share_rate}/1k shares • {reel.save_rate}/1k saves • "
-        f"{reel.comment_rate}/1k comments"
+        f"{post.kind}, {when} — “{title}”\n"
+        f"   {_amount(post.views, 'view')} · "
+        f"{_amount(post.reach, 'account')} reached · "
+        f"{_amount(post.likes, 'like')} · {_amount(post.comments, 'comment')} · "
+        f"{_amount(post.shares, 'share')} · {_amount(post.saves, 'save')}"
     )
-    if reasons:
-        line += "\n   Why: " + "; ".join(reasons[:3])
-    if reel.permalink:
-        line += f'\n   <a href="{reel.permalink}">open reel</a>'
+    if post.permalink:
+        line += f' · <a href="{html.escape(post.permalink, quote=True)}">open</a>'
     return line
 
 
-#: Hook formats that genuinely fit each engagement driver. A "how-to" beat
-#: sheet on a wildlife-discovery story would be a structure the story cannot
-#: deliver, so pairing is filtered through this before performance ranking.
-_DRIVER_COMPATIBLE_HOOKS: dict[str, tuple[str, ...]] = {
-    "Debate/Comment Trigger": (
-        "Opinion/debate hook", "Question hook", "Breaking-news hook",
-        "Shock/curiosity hook", "Plain statement hook",
-    ),
-    "High Save": (
-        "How-to/utility hook", "Number/list hook", "Stat/number hook",
-        "Question hook", "Plain statement hook",
-    ),
-    "High Share": (
-        "Shock/curiosity hook", "Stat/number hook", "Breaking-news hook",
-        "Number/list hook", "Plain statement hook",
-    ),
-}
+def _script_facts(story: ScoredItem) -> str:
+    """Up to two sentences of facts for a reel script, without filler.
 
-#: Categories whose stories only ever work as curiosity plays.
-_CATEGORY_COMPATIBLE_HOOKS: dict[str, tuple[str, ...]] = {
-    "Uncovered & Shocking News": (
-        "Shock/curiosity hook", "Question hook", "Stat/number hook",
-        "Number/list hook", "Plain statement hook",
-    ),
-}
-
-
-def _pick_hook_for(story: ScoredItem | None, ranked: list[str], used: set[str]) -> str:
-    """Highest-performing hook format that the story can actually support."""
-    if story is None:
-        allowed = tuple(ranked)
-    else:
-        allowed = _CATEGORY_COMPATIBLE_HOOKS.get(story.category)
-        if allowed is None:
-            driver = story.drivers[0] if story.drivers else "High Share"
-            allowed = _DRIVER_COMPATIBLE_HOOKS.get(
-                driver, _DRIVER_COMPATIBLE_HOOKS["High Share"]
-            )
-
-    # Prefer a compatible hook this account measurably wins with, and avoid
-    # repeating a format already used earlier in today's roadmap.
-    for hook in ranked:
-        if hook in allowed and hook not in used:
-            return hook
-    for hook in allowed:
-        if hook not in used:
-            return hook
-    return allowed[0] if allowed else "Plain statement hook"
-
-
-def build_concepts(
-    result: AuditResult, news_picks: list[ScoredItem]
-) -> list[dict[str, str]]:
-    """Three reel concepts: today's best news through the account's best hooks.
-
-    Each concept pairs a proven hook format (ranked by measured engagement,
-    then filtered to formats the story can actually deliver) with a
-    high-scoring story from this morning's news scan, so the roadmap is
-    grounded in both what the audience rewards and what is actually breaking.
+    ``core_facts`` opens with the headline (already shown on the story line)
+    and may end with a "Reported by ... carried by N feeds" note used when
+    the publisher gave no summary; neither belongs in a spoken script.
     """
-    hooks = winning_hook_types(result)
-    ranked = [h for h, _ in hooks] or [
-        "Question hook", "Stat/number hook", "Shock/curiosity hook"
+    title = story.item.title.strip().rstrip(".").lower()
+    sentences = re.split(r"(?<=[.!?])\s+", story.core_facts or "")
+    kept = [
+        s.strip() for s in sentences
+        if s.strip()
+        and not s.lower().startswith("reported by")
+        and s.strip().rstrip(".").lower() != title
     ]
-    used_hooks: set[str] = set()
-
-    bench = result.benchmarks
-    # A roadmap target has to be a stretch the account can actually chase:
-    # 1M is the stated goal, and roughly 1.5x the current median above that.
-    target_views = max(1_000_000, int(bench.views * 1.5)) if bench.views else 1_000_000
-
-    # Topics to fall back on when no news context is available, best first and
-    # de-duplicated so three concepts never chase the same category.
-    fallback_topics: list[str] = []
-    for reel in result.winners + sorted(result.reels, key=lambda r: -r.views):
-        if reel.topic not in fallback_topics and reel.topic != "Uncategorised":
-            fallback_topics.append(reel.topic)
-    fallback_topics = fallback_topics or ["India News"]
-
-    concepts: list[dict[str, str]] = []
-    for index in range(3):
-        story = news_picks[index] if index < len(news_picks) else None
-        hook_type = _pick_hook_for(story, ranked, used_hooks)
-        used_hooks.add(hook_type)
-
-        if story is not None:
-            angle = story.hook
-            facts = story.core_facts
-            cta = story.cta
-            topic = story.category
-            source = story.link
-        else:
-            # Audit-only run: build on the topics this account already wins.
-            topic = fallback_topics[index % len(fallback_topics)]
-            angle = f"Reframe today's biggest {topic} story as a {hook_type.lower()}."
-            facts = "Pull the two hardest numbers from the source and lead with them."
-            cta = "Comment your take — we read every one."
-            source = ""
-
-        concepts.append(
-            {
-                "hook_type": hook_type,
-                "topic": topic,
-                "hook_line": angle,
-                "facts": facts,
-                "cta": cta,
-                "source": source,
-                "structure": _structure_for(hook_type),
-                "target": f"{target_views:,} views",
-            }
-        )
-    return concepts
-
-
-def _structure_for(hook_type: str) -> str:
-    """The 0-3s / 3-12s / 12-25s beat sheet that fits this hook format."""
-    sheets = {
-        "Question hook":
-            "0-2s ask the question over the strongest frame | 3-10s two hard facts "
-            "| 11-20s the twist nobody expects | 21-25s CTA on screen + voice",
-        "Number/list hook":
-            "0-2s state the number | 3-18s one fact per beat, hard cuts every 3s "
-            "| 19-25s the last item is the most shareable | end on CTA card",
-        "Shock/curiosity hook":
-            "0-2s the shocking frame with no context | 3-6s withhold the answer "
-            "| 7-20s pay it off with sourced facts | 21-25s CTA",
-        "Breaking-news hook":
-            "0-2s BREAKING card + location | 3-12s what happened, who confirmed it "
-            "| 13-20s what it changes for the viewer | 21-25s CTA",
-        "How-to/utility hook":
-            "0-3s name the exact problem | 4-18s numbered steps on screen "
-            "| 19-25s 'save this' CTA while the steps stay visible",
-        "Stat/number hook":
-            "0-2s the number full-screen | 3-12s what it means in rupees/lives "
-            "| 13-20s the comparison that lands it | 21-25s CTA",
-        "Opinion/debate hook":
-            "0-3s state the contested claim flatly | 4-14s the strongest case each way "
-            "| 15-22s refuse to resolve it | 23-25s comment CTA",
-    }
-    return sheets.get(
-        hook_type,
-        "0-2s hook | 3-12s facts | 13-20s payoff | 21-25s CTA",
-    )
+    return " ".join(kept[:2]) or story.item.title
 
 
 def build_action_plan(
-    result: AuditResult,
-    news_picks: list[ScoredItem] | None = None,
-    account_handle: str = "Aravind News 24",
+    audit: AuditResult, news_picks: list[ScoredItem] | None = None
 ) -> str:
-    """Render the Telegram-ready executive action plan (HTML parse mode)."""
+    """Render the Telegram report (HTML parse mode, plain language)."""
+    posts = audit.posts
+    profile = audit.profile
     now_ist = datetime.now(config.IST)
-    bench = result.benchmarks
-    hooks = winning_hook_types(result)
-    concepts = build_concepts(result, news_picks or [])
+    followers = profile.get("followers_count")
+    ranked = sorted(posts, key=lambda p: (p.views, p.reach), reverse=True)
 
-    lines: list[str] = [
-        f"\U0001F3AC <b>{account_handle} — DAILY REELS AUDIT</b>",
-        f"<i>{now_ist.strftime('%A, %d %B %Y — %I:%M %p IST')}</i>",
+    # -- header -----------------------------------------------------------
+    lines = [
+        "\U0001F4CA <b>ARAVIND NEWS 24 — DAILY INSTAGRAM REPORT</b>",
+        f"<i>{now_ist.strftime('%A, %d %B %Y · %I:%M %p IST')}</i>",
         "",
-        f"Audited <b>{len(result.reels)}</b> recent reels against a "
-        f"<b>{bench.sample_size}</b>-reel historical baseline.",
-        f"Baseline medians: {int(bench.views):,} views • {bench.share_rate}/1k shares "
-        f"• {bench.save_rate}/1k saves • {bench.comment_rate}/1k comments "
-        f"• {bench.view_through}x view-through.",
-        "",
-        "✅ <b>WHAT WORKED &amp; WHY</b>",
+        "<b>Your account right now</b>",
     ]
+    account = []
+    if profile.get("username"):
+        account.append(f"@{_esc(profile['username'])}")
+    if followers is not None:
+        account.append(f"{followers:,} followers")
+    if profile.get("media_count") is not None:
+        account.append(f"{profile['media_count']:,} posts")
+    if account:
+        lines.append(" · ".join(account))
 
-    if result.winners:
-        for reel in result.winners[:3]:
-            verdict, reasons = result.verdicts[reel.media_id]
-            lines.append(_fmt_reel(reel, verdict, reasons))
-    else:
-        lines.append("No reel cleared the winner threshold — everything landed flat.")
-
-    if hooks:
-        best = ", ".join(f"{h} ({rate}/1k)" for h, rate in hooks[:3])
-        lines += ["", f"<b>Hook formats ranked by engagement:</b> {best}"]
-        topics: dict[str, list[float]] = {}
-        for reel in result.reels:
-            topics.setdefault(reel.topic, []).append(reel.views)
-        ranked_topics = sorted(
-            ((t, statistics.mean(v)) for t, v in topics.items()), key=lambda kv: -kv[1]
-        )[:3]
+    newest = max(p.posted_at for p in posts).astimezone(config.IST)
+    oldest = min(p.posted_at for p in posts).astimezone(config.IST)
+    breakdown = format_breakdown(posts)
+    mix = ", ".join(_count_phrase(kind, count) for kind, count, _ in breakdown)
+    lines.append(
+        f"I looked at your latest {len(posts)} posts "
+        f"({oldest:%d %b} – {newest:%d %b}): {mix}."
+    )
+    lines.append(
+        "These numbers come straight from Instagram Insights, so they should "
+        "match the Insights screen of each post in the app."
+    )
+    if len(posts) < FIRST_LOOK_POSTS:
         lines.append(
-            "<b>Topic categories by average views:</b> "
-            + ", ".join(f"{t} ({int(v):,})" for t, v in ranked_topics)
+            f"<i>Only {len(posts)} posts so far, so treat this as a first look.</i>"
         )
 
-    lines += ["", "❌ <b>WHAT DIDN'T WORK — AVOID TODAY</b>"]
-    if result.flops:
-        for reel in result.flops[:3]:
-            verdict, reasons = result.verdicts[reel.media_id]
-            lines.append(_fmt_reel(reel, verdict, reasons))
-    else:
-        lines.append("Nothing underperformed badly enough to flag.")
-
-    weak = [h for h, rate in hooks[-2:]] if len(hooks) > 2 else []
-    if weak:
-        lines.append(
-            "\n<b>Stop using:</b> " + ", ".join(weak)
-            + " — lowest measured engagement on this account."
-        )
-    low_retention = [r for r in result.reels if 0 < r.view_through < 1.0]
-    if low_retention:
-        lines.append(
-            f"<b>Retention warning:</b> {len(low_retention)} of {len(result.reels)} "
-            "reels had view-through under 1.0x — the opening frame is the problem, "
-            "not the topic. Cut the first 1.5 seconds and lead with the payoff."
-        )
-
-    lines += ["", "\U0001F680 <b>1-MILLION-VIEW ROADMAP FOR TODAY</b>"]
-    for index, concept in enumerate(concepts, start=1):
-        block = [
-            f"\n<b>CONCEPT {index} — {concept['hook_type']} | {concept['topic']}</b>",
-            f"   <b>Hook:</b> {concept['hook_line']}",
-            f"   <b>Facts:</b> {concept['facts']}",
-            f"   <b>Structure:</b> {concept['structure']}",
-            f"   <b>CTA:</b> {concept['cta']}",
-            f"   <b>Target:</b> {concept['target']}",
-        ]
-        if concept["source"]:
-            block.append(f'   <a href="{concept["source"]}">source</a>')
-        lines += block
+    # -- 1. what worked ---------------------------------------------------
+    lines += ["", "<b>1. WHAT WORKED</b>", "Your top posts by views:"]
+    for index, post in enumerate(ranked[:3], start=1):
+        lines.append(f"{index}) {_describe_post(post)}")
 
     lines += [
         "",
-        "<i>Publish windows: 08:00-09:30, 13:00-14:00 and 19:30-21:30 IST. "
-        "Post the debate concept last — comments compound into the evening.</i>",
+        "Average views per post, by format: " + " · ".join(
+            f"{_KIND_WORD.get(kind, kind.lower()).capitalize()}s {_num(avg)} "
+            f"({count} post{'' if count == 1 else 's'})"
+            for kind, count, avg in breakdown
+        ),
     ]
+    verdict = format_verdict(breakdown)
+    if verdict:
+        lines.append(verdict)
+
+    main_kind, topics = topic_breakdown(posts)
+    if topics:
+        kind_word = _KIND_WORD.get(main_kind, main_kind.lower())
+        lines.append(
+            f"Topics your {kind_word} posts got the most views on (average views): "
+            + ", ".join(
+                f"{_esc(topic)} {_num(avg)} ({count} posts)"
+                for topic, avg, count in topics[:3]
+            )
+        )
+
+    # -- 2. what didn't work ----------------------------------------------
+    n = len(posts)
+    likes = sum(p.likes for p in posts)
+    comments = sum(p.comments for p in posts)
+    shares = sum(p.shares for p in posts)
+    saves = sum(p.saves for p in posts)
+    lines += ["", "<b>2. WHAT DIDN'T WORK</b>"]
+    if likes + comments + shares + saves == 0:
+        lines.append(
+            f"• Nobody liked, commented on, saved or shared any of these {n} posts."
+        )
+    else:
+        lines.append(
+            f"• Across these {n} posts: {_amount(likes, 'like')}, "
+            f"{_amount(comments, 'comment')}, {_amount(shares, 'share')}, "
+            f"{_amount(saves, 'save')}."
+        )
+    typical_reach = statistics.median([p.reach for p in posts])
+    lines.append(
+        f"• A typical post reaches about {_amount(typical_reach, 'account')}."
+    )
+    asked = sum(1 for p in posts if _CTA_RE.search(p.caption or ""))
+    request_line = (
+        f"• {asked} of {n} captions ask viewers to comment, share, save or follow."
+    )
+    if asked < n / 2:
+        request_line += " Add one clear request to every caption."
+    elif likes + comments + shares + saves == 0:
+        request_line += (
+            " They already ask, so the bigger limit is how few accounts see "
+            "the posts, not the wording."
+        )
+    lines.append(request_line)
+
+    if n >= 6:
+        top_ids = {p.media_id for p in ranked[:3]}
+        weakest = [p for p in reversed(ranked) if p.media_id not in top_ids][:2]
+        if weakest:
+            lines += ["", "Lowest views:"]
+            lines += [f"• {_describe_post(p)}" for p in weakest]
+
+    # -- 3. today's plan --------------------------------------------------
+    best_reel = max(audit.reels, key=lambda p: p.views, default=None)
+    if best_reel is not None:
+        goal = (
+            f"Goal for today: beat your best reel so far ({_num(best_reel.views)} views)."
+        )
+    else:
+        goal = (
+            "Goal for today: post your first reel and beat your best post so far "
+            f"({_num(ranked[0].views)} views)."
+        )
+    lines += [
+        "",
+        "<b>3. TODAY'S PLAN — 3 REELS TO POST</b>",
+        f"{goal} One million views is the long-term aim; this is the next step towards it.",
+    ]
+
+    picks = (news_picks or [])[:3]
+    if not picks:
+        lines.append(
+            "No news list was available this morning. Pick the biggest story from "
+            "today's briefing and use the same layout: hook, facts, request."
+        )
+    for index, story in enumerate(picks, start=1):
+        lines += [
+            "",
+            f"<b>Reel {index} — {_esc(story.category)}</b>",
+            f"Story: {_esc(story.item.title)}",
+            f"First 2 seconds, say: “{_esc(story.hook)}”",
+            f"Next ~15 seconds, cover: {_esc(_script_facts(story))}",
+            f"Last 5 seconds, ask: {_esc(story.cta)}",
+            f"Why this story: it scored {story.score}/100 for viral potential "
+            "in this morning's news scan.",
+            f'<a href="{html.escape(story.link, quote=True)}">Source</a>',
+        ]
+
+    if followers is not None and followers < SMALL_ACCOUNT_FOLLOWERS:
+        lines += [
+            "",
+            f"<i>Small account, small numbers: with {followers:,} followers a single "
+            "view moves the averages a lot. Judge the trend over a few weeks, "
+            "not one day.</i>",
+        ]
     return "\n".join(lines)
 
 
@@ -766,17 +806,15 @@ def run_audit(
     news_picks: list[ScoredItem] | None = None,
     limit: int | None = None,
 ) -> tuple[str, AuditResult]:
-    """Full audit pipeline: fetch -> benchmark -> analyse -> action plan."""
+    """Full audit pipeline: fetch -> keep reel history -> build the report."""
     auditor = InstagramAuditor()
-    reels = auditor.fetch_recent_reels(limit)
+    sample, reels = auditor.fetch_recent_posts(limit)
+    profile = auditor.fetch_profile()
 
-    history = load_history()
-    prior = historical_benchmarks(history)
-    today = Benchmarks.from_reels(reels)
-    # Use history when we have one; otherwise today's pull is the only baseline.
-    baseline = prior if prior.sample_size >= len(reels) else today
-
-    result = analyse_reels(reels, baseline)
+    # The news briefing's "Fits Your Instagram?" column reads reel history
+    # only, so that is all that gets persisted; the report itself covers
+    # every format.
     save_history(reels, Benchmarks.from_reels(reels))
-    plan = build_action_plan(result, news_picks)
-    return plan, result
+
+    audit = AuditResult(posts=sample, reels=reels, profile=profile)
+    return build_action_plan(audit, news_picks), audit
