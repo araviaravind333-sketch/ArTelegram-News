@@ -481,6 +481,9 @@ _CTA_RE = re.compile(
     r"\bfollow\s+(?:us|for|our|@\w+|\S*news\S*)"
     r"|\b(?:drop|leave|share|post|write)\s+your\b"
     r"|\bin the comments\b|\bcomments? below\b|\bcomment\s+(?:below|now|if|your)\b"
+    # Keyword requests: comment "ID" / comment 'ZOMATO' / comment ID to learn...
+    r"|\bcomment\s+[\u201c\u201d\u2018\u2019'\x22]|\bcomment\s+\w+\s+to\b"
+    r"|\bhit\s+follow\b"
     r"|\btag\s+(?:a|your|someone|two|three|friends?)\b"
     r"|\bshare\s+(?:this|it|with)\b|\bsave\s+(?:this|it|for later)\b"
     r"|\b(?:tell us|let us know|what do you think|dm us|subscribe)\b"
