@@ -1,19 +1,34 @@
 {
   "reels": {
+    "18126674302869539": {
+      "media_id": "18126674302869539",
+      "permalink": "https://www.instagram.com/reel/DdnQ0sCiLRy/",
+      "posted_at": "2026-09-23T02:43:06+00:00",
+      "hook_type": "Plain statement hook",
+      "topic": "India News",
+      "views": 26.0,
+      "reach": 11.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 2.36,
+      "avg_watch_seconds": 6.79
+    },
     "18075357710412257": {
       "media_id": "18075357710412257",
       "permalink": "https://www.instagram.com/reel/DdijW05l6Oz/",
       "posted_at": "2026-09-21T06:48:37+00:00",
       "hook_type": "Opinion/debate hook",
       "topic": "India News",
-      "views": 15.0,
-      "reach": 7.0,
+      "views": 18.0,
+      "reach": 10.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 2.14,
-      "avg_watch_seconds": 7.11
+      "view_through": 1.8,
+      "avg_watch_seconds": 6.17
     },
     "18097884788620677": {
       "media_id": "18097884788620677",
@@ -21,14 +36,14 @@
       "posted_at": "2026-09-21T03:13:51+00:00",
       "hook_type": "Breaking-news hook",
       "topic": "India News",
-      "views": 74.0,
-      "reach": 54.0,
+      "views": 75.0,
+      "reach": 55.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.37,
-      "avg_watch_seconds": 3.46
+      "view_through": 1.36,
+      "avg_watch_seconds": 3.48
     },
     "18635832127046003": {
       "media_id": "18635832127046003",
@@ -92,16 +107,16 @@
     }
   },
   "benchmarks": {
-    "views": 16.5,
+    "views": 18.0,
     "share_rate": 0.0,
     "save_rate": 0.0,
     "comment_rate": 0.0,
     "engagement_rate": 0.0,
-    "view_through": 1.62,
+    "view_through": 1.59,
     "sample_size": 6
   },
   "category_performance": {
-    "India News": 16.5
+    "India News": 18.0
   },
-  "updated_at": "2026-09-22T04:42:32.709918+00:00"
+  "updated_at": "2026-09-23T04:42:58.567778+00:00"
 }
