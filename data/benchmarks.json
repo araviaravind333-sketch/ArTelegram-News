@@ -1,5 +1,35 @@
 {
   "reels": {
+    "17981630808111964": {
+      "media_id": "17981630808111964",
+      "permalink": "https://www.instagram.com/reel/DduWFJdgumk/",
+      "posted_at": "2026-09-25T20:43:40+00:00",
+      "hook_type": "Opinion/debate hook",
+      "topic": "Current Affairs",
+      "views": 63.0,
+      "reach": 44.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 31.75,
+      "view_through": 1.43,
+      "avg_watch_seconds": 4.46
+    },
+    "18379881811234319": {
+      "media_id": "18379881811234319",
+      "permalink": "https://www.instagram.com/reel/Ddt60v4E65R/",
+      "posted_at": "2026-09-25T16:45:29+00:00",
+      "hook_type": "Plain statement hook",
+      "topic": "Current Affairs",
+      "views": 58.0,
+      "reach": 36.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 1.61,
+      "avg_watch_seconds": 5.16
+    },
     "18126674302869539": {
       "media_id": "18126674302869539",
       "permalink": "https://www.instagram.com/reel/DdnQ0sCiLRy/",
@@ -107,16 +137,17 @@
     }
   },
   "benchmarks": {
-    "views": 18.0,
+    "views": 38.0,
     "share_rate": 0.0,
     "save_rate": 0.0,
     "comment_rate": 0.0,
     "engagement_rate": 0.0,
-    "view_through": 1.59,
-    "sample_size": 6
+    "view_through": 1.52,
+    "sample_size": 8
   },
   "category_performance": {
+    "Current Affairs": 60.5,
     "India News": 18.0
   },
-  "updated_at": "2026-09-25T04:44:25.520756+00:00"
+  "updated_at": "2026-09-26T04:42:31.742538+00:00"
 }
