@@ -186,6 +186,65 @@ FEEDS: tuple[FeedSource, ...] = (
         0.75,
     ),
 
+    # --- India creator feeds ----------------------------------------------
+    # What a current-affairs reel creator can actually use: money and rule
+    # changes, scams, shocking incidents, Tamil Nadu, and India desks of the
+    # big national outlets. The Telegram pulse keeps Indian stories only.
+    FeedSource(
+        "Google News - India Scams & Cyber Fraud",
+        f"{GOOGLE_NEWS}/search?q=scam+OR+fraud+OR+cyber+crime+OR+duped+India+when:1d&{IN_LOCALE}",
+        "India News",
+        0.78,
+    ),
+    FeedSource(
+        "Google News - India Money & New Rules",
+        f"{GOOGLE_NEWS}/search?q=UPI+OR+EPFO+OR+GST+OR+%22new+rule%22+OR+%22price+hike%22+OR+LPG+India+when:1d&{IN_LOCALE}",
+        "India News",
+        0.78,
+    ),
+    FeedSource(
+        "Google News - India Crime & Accidents",
+        f"{GOOGLE_NEWS}/search?q=killed+OR+arrested+OR+stampede+OR+accident+OR+collapse+India+when:1d&{IN_LOCALE}",
+        "India News",
+        0.75,
+    ),
+    FeedSource(
+        "Google News - Tamil Nadu",
+        f"{GOOGLE_NEWS}/search?q=Tamil+Nadu+when:1d&{IN_LOCALE}",
+        "India News",
+        0.78,
+    ),
+    FeedSource(
+        "The Hindu - Tamil Nadu",
+        "https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss",
+        "India News",
+        0.92,
+    ),
+    FeedSource(
+        "Times of India - India",
+        "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms",
+        "India News",
+        0.88,
+    ),
+    FeedSource(
+        "Indian Express - India",
+        "https://indianexpress.com/section/india/feed/",
+        "India News",
+        0.90,
+    ),
+    FeedSource(
+        "Hindustan Times - India",
+        "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml",
+        "India News",
+        0.88,
+    ),
+    FeedSource(
+        "NDTV - Top Stories",
+        "https://feeds.feedburner.com/ndtvnews-top-stories",
+        "India News",
+        0.88,
+    ),
+
     # --- Wire services and primary sources --------------------------------
     # Reuters retired its public RSS endpoints (reutersagency.com and
     # reuters.com/rssfeed both return 404/401), so Reuters copy is pulled

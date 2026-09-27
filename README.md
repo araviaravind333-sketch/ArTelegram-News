@@ -9,12 +9,18 @@ paid news API is used anywhere.
 
 ## What it does
 
-**Workflow 1 — News pulse (every hour)** — the main feed
-Aggregates 34 free RSS feeds, deduplicates across sources, scores each story
-1-100 for virality, and posts **only what is new since the last run** as a
-compact Telegram message: hook, core facts, score, drivers, CTA and a tappable
-source link. Nothing is ever posted twice. When a window is quiet the bot
-stays silent rather than sending a "no news" notice.
+**Workflow 1 — India news pulse (every hour)** — the main feed
+Aggregates 43 free RSS feeds and posts to Telegram **only Indian stories likely
+to get shares and comments** on a current-affairs reel: money and rule
+changes (PF, UPI, GST, fuel/LPG prices, fees, fines, deadlines), scams and
+cyber fraud, shocking incidents (crime, accidents, stampedes, disasters),
+breaking news, and public controversy. Foreign news, stock-market
+predictions, press-release filler and explainers are dropped
+(`analyzer/creator_filter.py`). Each story shows the real headline, one line
+of facts, why it ranked (e.g. "💰 Money / rules · 📍 Tamil Nadu"), a
+comment prompt to use in the reel, and the source link. The same event from
+several outlets is posted once, nothing is ever posted twice, and quiet hours
+stay silent. Up to 8 stories per hour, each needing a creator score of 65+.
 
 **Workflow 1b — Full briefing (`.docx`, daily at 07:00 IST or on demand)**
 The long-form counterpart: a styled Word document covering 8 categories
@@ -81,7 +87,7 @@ python -m venv .venv && .venv/Scripts/activate   # Linux/macOS: source .venv/bin
 pip install -r requirements.txt
 cp .env.example .env          # then fill it in
 python main.py check          # verifies configuration, prints no secrets
-python main.py pulse --dry-run          # see what the 20-min post looks like
+python main.py pulse --dry-run          # see what the hourly post looks like
 ```
 
 ---
@@ -186,11 +192,12 @@ clearing the ledger re-posts the current window.
 
 ```
 config.py                      env loading, validation, secret masking, tunables
-scrapers/rss_collector.py      34 feeds -> fetch -> dedupe -> time-window filter
+scrapers/rss_collector.py      43 feeds -> fetch -> dedupe -> time-window filter
 scrapers/seen_store.py         cross-run memory so the pulse never repeats a story
 analyzer/virality_engine.py    classification, 1-100 scoring, hooks, CTAs, Instagram-fit
+analyzer/creator_filter.py     India-only share/comment ranking for the Telegram pulse
 generators/doc_generator.py    styled landscape .docx with per-category tables
-generators/pulse_formatter.py  compact Telegram digest for the hourly pulse
+generators/pulse_formatter.py  compact Telegram digest for the hourly India pulse
 services/instagram_auditor.py  Graph API insights, plain-language report, reel plan
 services/telegram_notifier.py  sendMessage / sendDocument / getUpdates
 main.py                        window parsing, command dispatch, CLI

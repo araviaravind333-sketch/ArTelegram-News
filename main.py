@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import config
-from analyzer import virality_engine
+from analyzer import creator_filter, virality_engine
 from generators import doc_generator, pulse_formatter
 from scrapers import rss_collector, seen_store
 from services import youtube_trends
@@ -267,9 +267,8 @@ def run_pulse(
     chat_id: str | None = None,
     limit: int | None = None,
     min_score: int | None = None,
-    refine: bool = True,
 ) -> int:
-    """Post only the stories that are new since the previous run.
+    """Post the new Indian stories most likely to get shares and comments.
 
     Returns the number of stories posted. Zero means the run stayed silent,
     which is the normal outcome during quiet hours and is not an error.
@@ -294,32 +293,37 @@ def run_pulse(
         log.info("Nothing new since the last run - staying silent.")
         return 0
 
-    performance = virality_engine.load_category_performance()
+    # No per-category history multiplier here: data/benchmarks.json tracks the
+    # small @aravindnews24 account, which is not the account these reels are
+    # made for. What works on the creator's main account (money and rule
+    # changes, scams, shocking incidents) is built into creator_filter.
     youtube_topics = youtube_trends.fetch_trending_topics()
-    scored = [
-        virality_engine.analyse(item, performance, youtube_topics) for item in fresh
-    ]
+    scored = [virality_engine.analyse(item, {}, youtube_topics) for item in fresh]
 
+    # India only, re-ranked for what drives shares and comments on Indian
+    # news reels (money and rule changes, scams, shocking incidents,
+    # breaking news, public controversy). See analyzer/creator_filter.py.
+    picks, dropped = creator_filter.rank(scored)
     threshold = config.PULSE_MIN_SCORE if min_score is None else min_score
-    strong = [entry for entry in scored if entry.score >= threshold]
+    strong = [p for p in picks if p.creator_score >= threshold]
+    log.info(
+        "Pulse ranking: %d new, %d dropped as not Indian, %d Indian, %d above %d",
+        len(scored), dropped, len(picks), len(strong), threshold,
+    )
     if not strong:
-        log.info(
-            "%d new stories but none scored >= %d - holding them back.",
-            len(scored), threshold,
-        )
+        log.info("No new Indian story is strong enough - staying silent.")
         # Still mark them seen: they were judged and rejected, and re-judging
-        # the same weak stories every hour wastes the whole cycle.
+        # the same weak or foreign stories every hour wastes the whole cycle.
         if not dry_run:
             seen_store.save(seen_store.mark(fresh, store))
         return 0
 
-    strong.sort(key=lambda e: -e.score)
+    # Several outlets often cover the same event with different headlines;
+    # post it once, under the strongest version.
+    unique_picks, repeats = creator_filter.drop_same_topic(strong)
     cap = limit or config.PULSE_MAX_ITEMS
-    selected = strong[:cap]
-    overflow = strong[cap:]
-
-    if refine:
-        virality_engine.refine_with_claude(selected)
+    selected = unique_picks[:cap]
+    overflow = unique_picks[cap:]
 
     message = pulse_formatter.format_pulse(selected, generated_at=end)
 
@@ -341,16 +345,17 @@ def run_pulse(
     # into the next pulse and compete again rather than being suppressed
     # forever. Recency decay lowers their score each cycle, so they either get
     # posted soon or fall below the threshold and retire on their own.
-    posted_links = {e.link for e in selected}
-    overflow_links = {e.link for e in overflow}
+    posted_links = {p.entry.link for p in selected}
+    overflow_links = {p.entry.link for p in overflow}
     to_mark = [
         item for item in fresh
         if item.link in posted_links or item.link not in overflow_links
     ]
     seen_store.save(seen_store.mark(to_mark, store))
     log.info(
-        "Pulse delivered: %d posted, %d held for the next run, %d judged",
-        len(selected), len(overflow), len(fresh),
+        "Pulse delivered: %d posted, %d held for the next run, "
+        "%d same-topic repeats skipped, %d judged",
+        len(selected), len(overflow), repeats, len(fresh),
     )
     return len(selected)
 
@@ -402,7 +407,7 @@ def run_audit(
 
 HELP_TEXT = (
     "<b>Aravind News 24 — command reference</b>\n\n"
-    "<b>/pulse</b> — post whatever is new since the last check\n"
+    "<b>/pulse</b> — post the new Indian stories most likely to get shares and comments\n"
     "   (this runs automatically every hour)\n\n"
     "<b>/scan</b> — virality briefing for the last 24 hours\n"
     "<b>/scan 25m</b> — the rolling 25-minute scan\n"
@@ -503,8 +508,6 @@ def build_parser() -> argparse.ArgumentParser:
                        help=f"max stories per post (default {config.PULSE_MAX_ITEMS})")
     pulse.add_argument("--min-score", type=int, default=None,
                        help=f"hold back below this score (default {config.PULSE_MIN_SCORE})")
-    pulse.add_argument("--no-refine", action="store_true",
-                       help="skip the optional Claude hook/CTA pass")
     pulse.add_argument("--reset-seen", action="store_true",
                        help="clear the seen-store first (re-posts recent stories)")
 
@@ -604,7 +607,6 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 limit=args.limit,
                 min_score=args.min_score,
-                refine=not args.no_refine,
             )
             print(f"Posted {posted} story(ies)." if posted
                   else "No new stories - stayed silent.")
