@@ -1,19 +1,64 @@
 {
   "reels": {
+    "17989064862099361": {
+      "media_id": "17989064862099361",
+      "permalink": "https://www.instagram.com/reel/Dd-8cMDAnEt/",
+      "posted_at": "2026-10-02T07:26:42+00:00",
+      "hook_type": "Plain statement hook",
+      "topic": "India News",
+      "views": 2.0,
+      "reach": 2.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 1.0,
+      "avg_watch_seconds": 2.26
+    },
+    "17886322515686317": {
+      "media_id": "17886322515686317",
+      "permalink": "https://www.instagram.com/reel/Dd-y24RDU6T/",
+      "posted_at": "2026-10-02T06:02:59+00:00",
+      "hook_type": "Stat/number hook",
+      "topic": "Business News",
+      "views": 1.0,
+      "reach": 2.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 0.5,
+      "avg_watch_seconds": 1.67
+    },
+    "17880588819691220": {
+      "media_id": "17880588819691220",
+      "permalink": "https://www.instagram.com/reel/Dd9MzxyEdkc/",
+      "posted_at": "2026-10-01T15:11:15+00:00",
+      "hook_type": "Plain statement hook",
+      "topic": "India News",
+      "views": 20.0,
+      "reach": 16.0,
+      "share_rate": 0.0,
+      "save_rate": 0.0,
+      "comment_rate": 0.0,
+      "engagement_rate": 0.0,
+      "view_through": 1.25,
+      "avg_watch_seconds": 1.8
+    },
     "17977296111125004": {
       "media_id": "17977296111125004",
       "permalink": "https://www.instagram.com/reel/Dd8f8qLk4Uj/",
       "posted_at": "2026-10-01T08:39:13+00:00",
       "hook_type": "Stat/number hook",
       "topic": "India News",
-      "views": 3.0,
-      "reach": 2.0,
+      "views": 36.0,
+      "reach": 20.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.5,
-      "avg_watch_seconds": 4.23
+      "view_through": 1.8,
+      "avg_watch_seconds": 2.79
     },
     "18110891345142957": {
       "media_id": "18110891345142957",
@@ -21,14 +66,14 @@
       "posted_at": "2026-10-01T07:43:38+00:00",
       "hook_type": "Plain statement hook",
       "topic": "India News",
-      "views": 4.0,
-      "reach": 4.0,
+      "views": 9.0,
+      "reach": 8.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.0,
-      "avg_watch_seconds": 1.74
+      "view_through": 1.12,
+      "avg_watch_seconds": 2.63
     },
     "18143801596627449": {
       "media_id": "18143801596627449",
@@ -36,14 +81,14 @@
       "posted_at": "2026-10-01T01:56:38+00:00",
       "hook_type": "Plain statement hook",
       "topic": "India News",
-      "views": 32.0,
-      "reach": 18.0,
+      "views": 37.0,
+      "reach": 21.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.78,
-      "avg_watch_seconds": 2.08
+      "view_through": 1.76,
+      "avg_watch_seconds": 2.1
     },
     "17896173696673453": {
       "media_id": "17896173696673453",
@@ -51,14 +96,14 @@
       "posted_at": "2026-09-30T12:59:42+00:00",
       "hook_type": "Plain statement hook",
       "topic": "India News",
-      "views": 45.0,
-      "reach": 24.0,
+      "views": 48.0,
+      "reach": 25.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.88,
-      "avg_watch_seconds": 3.66
+      "view_through": 1.92,
+      "avg_watch_seconds": 3.67
     },
     "17948702010337917": {
       "media_id": "17948702010337917",
@@ -126,14 +171,14 @@
       "posted_at": "2026-09-29T16:39:16+00:00",
       "hook_type": "Plain statement hook",
       "topic": "India News",
-      "views": 11.0,
-      "reach": 10.0,
+      "views": 12.0,
+      "reach": 11.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.1,
-      "avg_watch_seconds": 1.67
+      "view_through": 1.09,
+      "avg_watch_seconds": 1.63
     },
     "17948558775285451": {
       "media_id": "17948558775285451",
@@ -232,13 +277,13 @@
       "hook_type": "Plain statement hook",
       "topic": "India News",
       "views": 10.0,
-      "reach": 7.0,
+      "reach": 8.0,
       "share_rate": 0.0,
       "save_rate": 0.0,
       "comment_rate": 0.0,
       "engagement_rate": 0.0,
-      "view_through": 1.43,
-      "avg_watch_seconds": 1.74
+      "view_through": 1.25,
+      "avg_watch_seconds": 1.57
     },
     "18629441821030584": {
       "media_id": "18629441821030584",
@@ -572,19 +617,20 @@
     }
   },
   "benchmarks": {
-    "views": 25.0,
+    "views": 23.0,
     "share_rate": 0.0,
     "save_rate": 0.0,
     "comment_rate": 0.0,
     "engagement_rate": 0.0,
-    "view_through": 1.52,
-    "sample_size": 28
+    "view_through": 1.5,
+    "sample_size": 29
   },
   "category_performance": {
     "India News": 26.0,
+    "Business News": 1.0,
     "Current Affairs": 173.0,
     "World News": 65.0,
     "Health News": 3.0
   },
-  "updated_at": "2026-10-01T11:07:36.706383+00:00"
+  "updated_at": "2026-10-02T10:41:14.100915+00:00"
 }
