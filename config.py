@@ -216,6 +216,14 @@ PULSE_LOOKBACK_MINUTES = get_int("PULSE_LOOKBACK_MINUTES", 90)
 #: genuinely new stories; anything scoring high enough but still over this
 #: cap rolls into the next hour's pulse rather than being dropped.
 PULSE_MAX_ITEMS = get_int("PULSE_MAX_ITEMS", 8)
+#: GitHub's scheduler can skip most runs of a frequent workflow (measured:
+#: ~4 fires a day for an hourly cron). After a gap the pulse scans back to
+#: the previous run instead of only PULSE_LOOKBACK_MINUTES, up to this many
+#: hours, so news published during the gap is not lost.
+PULSE_MAX_LOOKBACK_HOURS = get_int("PULSE_MAX_LOOKBACK_HOURS", 12)
+#: After a gap the per-post cap grows by PULSE_MAX_ITEMS for each hour
+#: missed, up to this many stories in one catch-up post.
+PULSE_CATCHUP_MAX_ITEMS = get_int("PULSE_CATCHUP_MAX_ITEMS", 24)
 #: Creator score (analyzer/creator_filter.py) an Indian story needs to be
 #: posted. Money/rules, scam, shocking, breaking and debate stories usually
 #: land at 65+; plain Indian news without those reasons usually lands below.

@@ -112,3 +112,36 @@ def save(store: dict[str, str]) -> None:
         json.dumps(store, indent=0, sort_keys=True), encoding="utf-8"
     )
     log.info("Seen-store saved: %d entries", len(store))
+
+
+#: Reserved ledger key holding the time of the last completed pulse run. It
+#: is stored as an ordinary timestamp entry, so it expires with the same TTL
+#: as everything else.
+LAST_RUN_KEY = "meta:last_run"
+
+
+def last_run(store: dict[str, str]) -> datetime | None:
+    """When the pulse last completed, or ``None`` if unknown.
+
+    Ledgers written before this stamp existed have no ``meta:last_run``;
+    every story entry is stamped with the time of the run that judged it,
+    so the newest entry is the previous run.
+    """
+    stamps = [store[LAST_RUN_KEY]] if store.get(LAST_RUN_KEY) else list(store.values())
+    latest: datetime | None = None
+    for stamp in stamps:
+        try:
+            value = datetime.fromisoformat(stamp)
+        except (TypeError, ValueError):
+            continue
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if latest is None or value > latest:
+            latest = value
+    return latest
+
+
+def stamp_run(store: dict[str, str], when: datetime | None = None) -> dict[str, str]:
+    """Record that a pulse run completed (call just before ``save``)."""
+    store[LAST_RUN_KEY] = (when or datetime.now(timezone.utc)).isoformat()
+    return store

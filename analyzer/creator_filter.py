@@ -190,7 +190,10 @@ _LOW_VALUE = re.compile(
     r"|q[1-4] results|quarterly results|results preview"
     r"|inaugurat|chairs? (?:a )?meeting|reviews? (?:the )?progress|greetings"
     r"|webinar|\bmou\b|conclave|summit to be held"
-    r"|recipe|weekend getaway|best (?:phones|laptops|deals)|deal of the day",
+    r"|recipe|weekend getaway|best (?:phones|laptops|deals)|deal of the day"
+    # roundups are several stories in one headline, not a reel topic
+    r"|news wrap|top (?:headlines|news|stories) (?:of|today|this)|morning brief"
+    r"|evening brief|top 10 news|headlines today|daily briefing",
     re.I,
 )
 
@@ -311,6 +314,34 @@ def rank(entries: list[ScoredItem]) -> tuple[list[CreatorPick], int]:
 #: each event once.
 SAME_TOPIC_THRESHOLD = 0.30
 
+#: Differently worded headlines about one event share few words overall but
+#: still share its specifics ("UPI", "fee", "Diwali"). This many shared
+#: *distinctive* words also counts as the same event.
+SAME_TOPIC_SHARED_WORDS = 3
+
+#: Words too common in Indian news to say two headlines are about the same
+#: event: places, parties, institutions and generic news verbs.
+_COMMON_NEWS_WORDS = frozenset(
+    """india indian indias tamil nadu delhi mumbai chennai bengaluru kolkata
+    hyderabad kerala karnataka bihar punjab gujarat maharashtra uttar pradesh
+    govt government centre state police court supreme high case cases bjp
+    congress dmk minister chief modi rahul gandhi says said say news live
+    update updates today new year years days people man woman women men
+    arrested arrest dead death killed row against amid over after before
+    lakh crore report reports check know what why how when who here will
+    may can 2025 2026 2027""".split()
+)
+
+
+def _distinctive(tokens: frozenset[str]) -> frozenset[str]:
+    return frozenset(t for t in tokens if t not in _COMMON_NEWS_WORDS)
+
+
+def _same_topic(a: frozenset[str], b: frozenset[str]) -> bool:
+    if jaccard(a, b) >= SAME_TOPIC_THRESHOLD:
+        return True
+    return len(_distinctive(a) & _distinctive(b)) >= SAME_TOPIC_SHARED_WORDS
+
 
 def drop_same_topic(picks: list[CreatorPick]) -> tuple[list[CreatorPick], int]:
     """Keep the strongest pick per event; return the kept picks (order kept)
@@ -320,7 +351,7 @@ def drop_same_topic(picks: list[CreatorPick]) -> tuple[list[CreatorPick], int]:
     kept_tokens: list[frozenset[str]] = []
     for pick in picks:
         tokens = title_tokens(pick.entry.item.title)
-        if any(jaccard(tokens, other) >= SAME_TOPIC_THRESHOLD for other in kept_tokens):
+        if any(_same_topic(tokens, other) for other in kept_tokens):
             continue
         kept.append(pick)
         kept_tokens.append(tokens)

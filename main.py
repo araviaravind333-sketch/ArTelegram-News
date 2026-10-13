@@ -276,21 +276,47 @@ def run_pulse(
     The seen-store, not the time window, decides what counts as new: feeds lag
     behind publication, so the scan looks back further than the 1-hour interval and
     lets the ledger filter out anything already sent.
+
+    The schedule cannot be trusted to be hourly: GitHub skips most runs of a
+    frequent workflow. So the window reaches back to the previous completed
+    run, and the per-post cap grows with the gap - a run after six silent
+    hours catches up on those six hours instead of reporting only the last
+    ninety minutes.
     """
     end = virality_engine.now_utc()
-    start = end - timedelta(minutes=config.PULSE_LOOKBACK_MINUTES)
-    log.info("Pulse window: %s", virality_engine.window_label(start, end))
+    store = seen_store.load()
 
-    # No auto-widening here: a pulse reports what just happened. If the last
-    # 90 minutes were quiet, the correct output is silence.
+    lookback = timedelta(minutes=config.PULSE_LOOKBACK_MINUTES)
+    previous = seen_store.last_run(store)
+    gap_hours = 1.0
+    if previous is not None and previous < end:
+        gap = end - previous
+        gap_hours = gap.total_seconds() / 3600
+        # +30 min: stories reach RSS feeds some time after they are published.
+        lookback = max(lookback, gap + timedelta(minutes=30))
+    lookback = min(lookback, timedelta(hours=config.PULSE_MAX_LOOKBACK_HOURS))
+    start = end - lookback
+    log.info(
+        "Pulse window: %s (previous run %s)",
+        virality_engine.window_label(start, end),
+        f"{gap_hours:.1f}h ago" if previous else "unknown",
+    )
+
+    def finish(marked: list) -> None:
+        """Persist what was judged and when this run completed."""
+        seen_store.save(seen_store.stamp_run(seen_store.mark(marked, store), end))
+
+    # No auto-widening beyond that: a pulse reports what happened since the
+    # last one. If that period was quiet, the correct output is silence.
     raw = rss_collector.fetch_all()
     unique = rss_collector.deduplicate(raw)
     in_window = rss_collector.filter_by_window(unique, start, end)
 
-    store = seen_store.load()
     fresh = seen_store.filter_new(in_window, store)
     if not fresh:
         log.info("Nothing new since the last run - staying silent.")
+        if not dry_run:
+            finish([])
         return 0
 
     # No per-category history multiplier here: data/benchmarks.json tracks the
@@ -315,17 +341,24 @@ def run_pulse(
         # Still mark them seen: they were judged and rejected, and re-judging
         # the same weak or foreign stories every hour wastes the whole cycle.
         if not dry_run:
-            seen_store.save(seen_store.mark(fresh, store))
+            finish(fresh)
         return 0
 
     # Several outlets often cover the same event with different headlines;
     # post it once, under the strongest version.
     unique_picks, repeats = creator_filter.drop_same_topic(strong)
-    cap = limit or config.PULSE_MAX_ITEMS
+    # PULSE_MAX_ITEMS is a per-hour budget; a run covering several missed
+    # hours gets that budget for each of them, up to the catch-up ceiling.
+    cap = limit or min(
+        config.PULSE_CATCHUP_MAX_ITEMS,
+        config.PULSE_MAX_ITEMS * max(1, round(gap_hours)),
+    )
     selected = unique_picks[:cap]
     overflow = unique_picks[cap:]
 
-    message = pulse_formatter.format_pulse(selected, generated_at=end)
+    message = pulse_formatter.format_pulse(
+        selected, generated_at=end, since=start if gap_hours >= 2 else None
+    )
 
     if dry_run:
         print(message)
@@ -351,7 +384,7 @@ def run_pulse(
         item for item in fresh
         if item.link in posted_links or item.link not in overflow_links
     ]
-    seen_store.save(seen_store.mark(to_mark, store))
+    finish(to_mark)
     log.info(
         "Pulse delivered: %d posted, %d held for the next run, "
         "%d same-topic repeats skipped, %d judged",

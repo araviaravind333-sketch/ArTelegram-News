@@ -22,6 +22,14 @@ comment prompt to use in the reel, and the source link. The same event from
 several outlets is posted once, nothing is ever posted twice, and quiet hours
 stay silent. Up to 8 stories per hour, each needing a creator score of 65+.
 
+**If runs are skipped, the next one catches up.** GitHub's scheduler does not
+guarantee an hourly cron and has been measured firing this workflow only about
+4 times a day. Each run therefore scans back to the previous completed run (up
+to 12 hours), not just the last 90 minutes, and may post up to 8 stories for
+each hour it covers (24 at most), with a "since HH:MM" note in the header. For
+a truly hourly feed, trigger `news_pulse.yml` from an external scheduler via
+`workflow_dispatch`.
+
 **Workflow 1b — Full briefing (`.docx`, daily at 07:00 IST or on demand)**
 The long-form counterpart: a styled Word document covering 8 categories
 (India, World, Business, Sports, Technology, Health, Unreported, Current

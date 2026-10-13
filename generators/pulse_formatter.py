@@ -75,8 +75,12 @@ def format_story(pick: CreatorPick, index: int) -> str:
 def format_pulse(
     picks: list[CreatorPick],
     generated_at: datetime | None = None,
+    since: datetime | None = None,
 ) -> str:
     """Render the full pulse message.
+
+    ``since`` is set for a catch-up post that covers several hours, and is
+    shown in the header so the reader knows what period it covers.
 
     Returns an empty string when there is nothing to post, which the caller
     treats as "stay silent" rather than sending a no-news notice.
@@ -90,7 +94,12 @@ def format_pulse(
 
     header = (
         f"\U0001F1EE\U0001F1F3 <b>INDIA NEWS PULSE</b> · {now_ist.strftime('%I:%M %p IST')}\n"
-        f"<i>{count} new India {noun} most likely to get shares and comments</i>"
+        f"<i>{count} new India {noun} most likely to get shares and comments"
+        + (
+            f", since {since.astimezone(config.IST).strftime('%I:%M %p')}"
+            if since else ""
+        )
+        + "</i>"
     )
     body = "\n\n".join(format_story(pick, i) for i, pick in enumerate(picks, start=1))
     footer = (
