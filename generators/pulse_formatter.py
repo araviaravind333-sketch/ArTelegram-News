@@ -72,28 +72,32 @@ def format_story(pick: CreatorPick, index: int) -> str:
     return "\n".join(lines)
 
 
-def format_pulse(
+#: Characters per Telegram message, kept under the 4,096 limit (which counts
+#: text after HTML tags are removed, so this is conservative).
+MAX_MESSAGE_CHARS = 3800
+
+
+def format_pulse_parts(
     picks: list[CreatorPick],
     generated_at: datetime | None = None,
     since: datetime | None = None,
-) -> str:
-    """Render the full pulse message.
+) -> list[tuple[str, list[CreatorPick]]]:
+    """Render the pulse as Telegram-sized messages, split between stories.
 
-    ``since`` is set for a catch-up post that covers several hours, and is
-    shown in the header so the reader knows what period it covers.
-
-    Returns an empty string when there is nothing to post, which the caller
-    treats as "stay silent" rather than sending a no-news notice.
+    Returns ``(message, stories in it)`` pairs, so the caller knows exactly
+    which stories reached Telegram if a later message fails. ``since`` is set
+    for a catch-up post that covers several hours, and is shown in the header.
+    Returns ``[]`` when there is nothing to post, which the caller treats as
+    "stay silent" rather than sending a no-news notice.
     """
     if not picks:
-        return ""
+        return []
 
     now_ist = (generated_at or datetime.now(config.UTC)).astimezone(config.IST)
     count = len(picks)
     noun = "story" if count == 1 else "stories"
-
     header = (
-        f"\U0001F1EE\U0001F1F3 <b>INDIA NEWS PULSE</b> · {now_ist.strftime('%I:%M %p IST')}\n"
+        f"\U0001F1EE\U0001F1F3 <b>INDIA NEWS PULSE</b> \u00b7 {now_ist.strftime('%I:%M %p IST')}\n"
         f"<i>{count} new India {noun} most likely to get shares and comments"
         + (
             f", since {since.astimezone(config.IST).strftime('%I:%M %p')}"
@@ -101,9 +105,30 @@ def format_pulse(
         )
         + "</i>"
     )
-    body = "\n\n".join(format_story(pick, i) for i, pick in enumerate(picks, start=1))
     footer = (
         "<i>Ranked by: money and rule changes, scams, shocking incidents, "
         "breaking news and public debate. Foreign news is left out.</i>"
     )
-    return f"{header}\n\n{body}\n\n{footer}"
+
+    parts: list[tuple[str, list[CreatorPick]]] = []
+    text, in_part = header, []
+    for index, pick in enumerate(picks, start=1):
+        block = format_story(pick, index)
+        if in_part and len(text) + len(block) + len(footer) + 6 > MAX_MESSAGE_CHARS:
+            parts.append((text, in_part))
+            text, in_part = "<i>(continued)</i>", []
+        text = f"{text}\n\n{block}"
+        in_part.append(pick)
+    parts.append((f"{text}\n\n{footer}", in_part))
+    return parts
+
+
+def format_pulse(
+    picks: list[CreatorPick],
+    generated_at: datetime | None = None,
+    since: datetime | None = None,
+) -> str:
+    """The whole pulse as one string (used for dry runs and tests)."""
+    return "\n\n".join(
+        text for text, _ in format_pulse_parts(picks, generated_at, since)
+    )

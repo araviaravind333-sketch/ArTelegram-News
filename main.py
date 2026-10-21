@@ -356,9 +356,10 @@ def run_pulse(
     selected = unique_picks[:cap]
     overflow = unique_picks[cap:]
 
-    message = pulse_formatter.format_pulse(
+    parts = pulse_formatter.format_pulse_parts(
         selected, generated_at=end, since=start if gap_hours >= 2 else None
     )
+    message = "\n\n".join(text for text, _ in parts)
 
     if dry_run:
         print(message)
@@ -366,7 +367,15 @@ def run_pulse(
         return len(selected)
 
     notifier = notifier or TelegramNotifier()
-    notifier.send_message(message, chat_id=chat_id, disable_preview=True)
+    delivered: list = []
+    failure: TelegramError | None = None
+    for text, part_picks in parts:
+        try:
+            notifier.send_message(text, chat_id=chat_id, disable_preview=True)
+        except TelegramError as exc:
+            failure = exc
+            break
+        delivered.extend(part_picks)
 
     # Record only after delivery succeeds, so a Telegram outage retries these
     # stories next run instead of silently dropping them.
@@ -378,13 +387,24 @@ def run_pulse(
     # into the next pulse and compete again rather than being suppressed
     # forever. Recency decay lowers their score each cycle, so they either get
     # posted soon or fall below the threshold and retire on their own.
-    posted_links = {p.entry.link for p in selected}
-    overflow_links = {p.entry.link for p in overflow}
-    to_mark = [
-        item for item in fresh
-        if item.link in posted_links or item.link not in overflow_links
-    ]
+    #
+    # If Telegram failed part-way, the stories that did arrive are recorded
+    # (so they are not sent twice) and the rest are treated like overflow:
+    # unmarked, so the next run sends them.
+    delivered_links = {p.entry.link for p in delivered}
+    unsent_links = {
+        p.entry.link for p in selected + overflow
+        if p.entry.link not in delivered_links
+    }
+    to_mark = [item for item in fresh if item.link not in unsent_links]
     finish(to_mark)
+    if failure is not None:
+        unsent = len(selected) - len(delivered)
+        raise TelegramError(
+            f"Telegram stopped responding after {len(delivered)} of "
+            f"{len(selected)} stories ({failure}). The other {unsent} will be "
+            "sent on the next run; nothing will be repeated."
+        )
     log.info(
         "Pulse delivered: %d posted, %d held for the next run, "
         "%d same-topic repeats skipped, %d judged",

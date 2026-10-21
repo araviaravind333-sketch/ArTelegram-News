@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 
 API_ROOT = "https://api.telegram.org/bot{token}/{method}"
 MESSAGE_LIMIT = 4096
+#: Attempts per Bot API call, and the pause before each retry.
+RETRY_ATTEMPTS = 4
+RETRY_BACKOFF_SECONDS = (3, 8, 20)
 CAPTION_LIMIT = 1024
 
 
@@ -46,26 +49,54 @@ class TelegramNotifier:
     # -- plumbing ----------------------------------------------------------
 
     def _call(self, method: str, *, timeout: int = 30, **kwargs) -> dict[str, Any]:
+        """Call the Bot API, retrying failures that are usually momentary.
+
+        Retried: dropped or refused connections, timeouts, HTTP 429 (waiting
+        the ``retry_after`` Telegram asks for) and 5xx. A dropped connection
+        can, rarely, happen after Telegram has already accepted a message, so
+        a retry may then show it twice - preferred over losing a post, which
+        is what a single dropped connection used to cause.
+        """
         url = API_ROOT.format(token=self.token, method=method)
-        try:
-            response = self.session.post(url, timeout=timeout, **kwargs)
-        except requests.RequestException as exc:
-            raise TelegramError(f"{method} request failed: {exc}") from exc
+        last_error = "unknown error"
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            if attempt > 1:
+                time.sleep(wait)
+            wait = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+            try:
+                response = self.session.post(url, timeout=timeout, **kwargs)
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                last_error = f"{method} request failed: {exc}"
+                log.warning("%s (attempt %d/%d)", last_error, attempt, RETRY_ATTEMPTS)
+                continue
+            except requests.RequestException as exc:
+                raise TelegramError(f"{method} request failed: {exc}") from exc
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise TelegramError(
-                f"{method} returned non-JSON (HTTP {response.status_code})"
-            ) from exc
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+                if response.status_code < 500:
+                    raise TelegramError(
+                        f"{method} returned non-JSON (HTTP {response.status_code})"
+                    )
 
-        if not payload.get("ok"):
+            if payload.get("ok"):
+                return payload.get("result", {})
+
             # description never contains the token, so it is safe to surface.
-            raise TelegramError(
+            last_error = (
                 f"{method} failed (HTTP {response.status_code}): "
                 f"{payload.get('description', 'unknown error')}"
             )
-        return payload.get("result", {})
+            if response.status_code == 429:
+                retry_after = (payload.get("parameters") or {}).get("retry_after")
+                if isinstance(retry_after, (int, float)) and retry_after <= 60:
+                    wait = max(wait, float(retry_after) + 1)
+            elif response.status_code < 500:
+                raise TelegramError(last_error)
+            log.warning("%s (attempt %d/%d)", last_error, attempt, RETRY_ATTEMPTS)
+        raise TelegramError(f"{last_error} - gave up after {RETRY_ATTEMPTS} attempts")
 
     # -- outbound ----------------------------------------------------------
 

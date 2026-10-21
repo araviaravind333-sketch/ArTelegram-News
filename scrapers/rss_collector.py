@@ -227,8 +227,10 @@ FEEDS: tuple[FeedSource, ...] = (
         0.88,
     ),
     FeedSource(
-        "Indian Express - India",
-        "https://indianexpress.com/section/india/feed/",
+        # indianexpress.com returns 403 to GitHub's servers on every run, so
+        # its India coverage is read through Google News instead.
+        "Indian Express via Google News",
+        f"{GOOGLE_NEWS}/search?q=site:indianexpress.com+India+when:1d&{IN_LOCALE}",
         "India News",
         0.90,
     ),
